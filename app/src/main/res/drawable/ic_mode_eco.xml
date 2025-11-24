@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Natural leaf shape -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="
+            M24,4
+            C15,8 8,18 10,28
+            C12,38 20,45 30,42
+            C40,38 44,26 38,16
+            C34,10 30,6 24,4
+            Z"/>
+
+    <!-- Soft light reflection -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="
+            M20,6
+            C14,12 11,20 13,27
+            C14,31 17,35 20,38
+            C18,30 18,22 22,15
+            C23,12 23,9 20,6
+            Z"/>
+
+    <!-- Main vein -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M24,10 L24,38"/>
+
+    <!-- Natural curved veins -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:pathData="
+            M24,16 C20,17 18,19 17,21
+            M24,22 C19,23 17,26 16,28
+            M24,28 C20,29 18,32 17,34"/>
+
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:pathData="
+            M24,16 C28,17 30,19 31,21
+            M24,22 C29,23 31,26 32,28
+            M24,28 C28,29 30,32 31,34"/>
+
+</vector>
