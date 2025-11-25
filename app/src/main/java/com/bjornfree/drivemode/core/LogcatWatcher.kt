@@ -18,14 +18,33 @@ class LogcatWatcher {
 
     private var process: Process? = null
 
+    @Volatile
+    var hasRootAccess: Boolean = false
+        private set
+
+    @Volatile
+    var lastError: String? = null
+        private set
+
     fun linesFlow(): Flow<String> = channelFlow {
         val cmdSu = arrayOf("su", "-c", "logcat -v time -T 1 -b main -b system")
         val cmdNormal = arrayOf("logcat", "-v", "time", "-T", "1", "-b", "main", "-b", "system")
 
         val proc = try {
+            hasRootAccess = true
+            lastError = null
             Runtime.getRuntime().exec(cmdSu)
         } catch (e: Exception) {
-            Runtime.getRuntime().exec(cmdNormal)
+            hasRootAccess = false
+            lastError = "Root access failed: ${e.message}"
+            DriveModeService.logConsole("LogcatWatcher: root access failed, fallback to non-root")
+            try {
+                Runtime.getRuntime().exec(cmdNormal)
+            } catch (e2: Exception) {
+                lastError = "Logcat failed: ${e2.message}"
+                DriveModeService.logConsole("LogcatWatcher: CRITICAL - both su and non-root logcat failed!")
+                throw e2
+            }
         }
 
         process = proc

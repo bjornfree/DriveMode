@@ -26,6 +26,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.ExistingPeriodicWorkPolicy
+import java.util.concurrent.TimeUnit
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -59,16 +66,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.graphics.asImageBitmap
 import com.bjornfree.drivemode.core.AutoSeatHeatService
+import com.bjornfree.drivemode.core.ServiceWatchdogWorker
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Стартуем ForegroundService, чтобы при открытии приложения всё сразу работало
+        // Стартуем ForegroundService'ы, чтобы при открытии приложения всё сразу работало
         try {
             startForegroundService(Intent(this, DriveModeService::class.java))
+            startForegroundService(Intent(this, AutoSeatHeatService::class.java))
         } catch (_: IllegalStateException) {
             startService(Intent(this, DriveModeService::class.java))
+            startService(Intent(this, AutoSeatHeatService::class.java))
         }
+
+        // Запускаем периодический watchdog для автоматического перезапуска сервисов
+        startServiceWatchdog()
 
         val prefs = getSharedPreferences("drivemode_prefs", Context.MODE_PRIVATE)
         val launches = prefs.getInt("launch_count", 0) + 1
@@ -85,6 +98,28 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * Запускает периодический watchdog для проверки и перезапуска сервисов.
+     * Использует uniqueWork чтобы не создавать дубликаты.
+     */
+    private fun startServiceWatchdog() {
+        try {
+            val watchdogWork = PeriodicWorkRequestBuilder<ServiceWatchdogWorker>(
+                15, TimeUnit.MINUTES
+            ).build()
+
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "ServiceWatchdogWork",
+                ExistingPeriodicWorkPolicy.KEEP, // Не перезаписываем если уже есть
+                watchdogWork
+            )
+
+            DriveModeService.logConsole("MainActivity: ServiceWatchdog scheduled (periodic 15 min)")
+        } catch (e: Exception) {
+            DriveModeService.logConsole("MainActivity: Failed to schedule watchdog: ${e.message}")
         }
     }
 }
@@ -174,8 +209,7 @@ private fun AppScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 400.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .heightIn(max = 400.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -192,9 +226,6 @@ private fun AppScreen(
                         Image(
                             bitmap = donateBitmap.asImageBitmap(),
                             contentDescription = "QR для доната",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
                         )
                     } else {
                         Text("QR для доната не удалось загрузить")
@@ -210,7 +241,6 @@ private fun StatusCard() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var carApiAvailable by remember { mutableStateOf<Boolean?>(null) }
-    var carPermissionsOk by remember { mutableStateOf<Boolean?>(null) }
     var overlayGranted by remember { mutableStateOf<Boolean?>(null) }
     var ignoreBattery by remember { mutableStateOf<Boolean?>(null) }
     var suAvailable by remember { mutableStateOf<Boolean?>(null) }
@@ -228,9 +258,6 @@ private fun StatusCard() {
                 false
             }
 
-            // Читаем фактический доступ к CarProperty через нашу обёртку
-            val hasCarAccess = core.hasCarPermissions()
-
             // Разрешение на оверлей
             val overlayOk = Settings.canDrawOverlays(appCtx)
 
@@ -243,7 +270,6 @@ private fun StatusCard() {
 
             withContext(Dispatchers.Main) {
                 carApiAvailable = hasApi
-                carPermissionsOk = hasCarAccess
                 overlayGranted = overlayOk
                 ignoreBattery = batteryOk
                 suAvailable = suOk
@@ -270,17 +296,6 @@ private fun StatusCard() {
                 false -> "Нет android.car"
             }
             val carApiOk: Boolean? = when (carApiAvailable) {
-                null -> null
-                true -> true
-                false -> false
-            }
-
-            val carPermText = when (carPermissionsOk) {
-                null -> "Проверяем…"
-                true -> "ОК"
-                false -> "Ошибка доступа"
-            }
-            val carPermOk: Boolean? = when (carPermissionsOk) {
                 null -> null
                 true -> true
                 false -> false
@@ -354,11 +369,6 @@ private fun StatusCard() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StatusTile(
-                        title = "Car HAL",
-                        value = carPermText,
-                        ok = carPermOk
-                    )
-                    StatusTile(
                         title = "Doze",
                         value = batteryText,
                         ok = batteryOk
@@ -431,79 +441,6 @@ private fun ActionsCard(
             )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(onClick = {
-                    try {
-                        ContextCompat.startForegroundService(ctx, Intent(ctx, DriveModeService::class.java))
-                        Toast.makeText(ctx, "Сервис запущен/обновлён", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(ctx, "Ошибка запуска сервиса: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text("Запустить сервис")
-                }
-                Button(onClick = {
-                    try {
-                        ctx.stopService(Intent(ctx, DriveModeService::class.java))
-                        Toast.makeText(ctx, "Сервис остановлен", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(ctx, "Ошибка остановки сервиса: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
-                    }
-                }) {
-                    Text("Остановить сервис")
-                }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(onClick = {
-                    Runtime.getRuntime().exec(
-                        arrayOf(
-                            "log",
-                            "-t", "QSCarPropertyManager",
-                            "handleDriveModeChange handleDriveModeChange: realValue 570491137"
-                        )
-                    )
-                    Toast.makeText(ctx, "ECO emitted", Toast.LENGTH_SHORT).show()
-                }) { Text("Test ECO") }
-
-                Button(onClick = {
-                    Runtime.getRuntime().exec(
-                        arrayOf(
-                            "log",
-                            "-t", "QSCarPropertyManager",
-                            "handleDriveModeChange handleDriveModeChange: realValue 570491138"
-                        )
-                    )
-                    Toast.makeText(ctx, "COMFORT emitted", Toast.LENGTH_SHORT).show()
-                }) { Text("Test COMFORT") }
-
-                Button(onClick = {
-                    Runtime.getRuntime().exec(
-                        arrayOf(
-                            "log",
-                            "-t", "QSCarPropertyManager",
-                            "handleDriveModeChange handleDriveModeChange: realValue 570491139"
-                        )
-                    )
-                    Toast.makeText(ctx, "SPORT emitted", Toast.LENGTH_SHORT).show()
-                }) { Text("Test SPORT") }
-
-                Button(onClick = {
-                    Runtime.getRuntime().exec(
-                        arrayOf(
-                            "log",
-                            "-t", "QSCarPropertyManager",
-                            "handleDriveModeChange handleDriveModeChange: realValue 570491201"
-                        )
-                    )
-                    Toast.makeText(ctx, "ADAPT emitted", Toast.LENGTH_SHORT).show()
-                }) { Text("Test ADAPT") }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(onClick = { onToggleConsole() }) {
@@ -516,6 +453,19 @@ private fun ActionsCard(
                     Text("Исключить из Doze")
                 }
             }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(onClick = {
+                    val watchdogWork = OneTimeWorkRequestBuilder<ServiceWatchdogWorker>().build()
+                    WorkManager.getInstance(ctx).enqueue(watchdogWork)
+                    Toast.makeText(ctx, "Watchdog запущен вручную", Toast.LENGTH_SHORT).show()
+                    DriveModeService.logConsole("Manual watchdog check triggered")
+                }) {
+                    Text("Проверить сервисы")
+                }
+            }
         }
     }
 }
@@ -524,6 +474,7 @@ private fun ActionsCard(
 private fun SeatHeatAutoCard() {
     val ctx = LocalContext.current
     val prefs = remember { ctx.getSharedPreferences("drivemode_prefs", Context.MODE_PRIVATE) }
+    val scope = rememberCoroutineScope()
 
     var mode by remember {
         mutableStateOf(
@@ -531,10 +482,60 @@ private fun SeatHeatAutoCard() {
         )
     }
 
+    var heatLevel by remember {
+        mutableStateOf(
+            prefs.getInt("seat_heat_level", 1)
+        )
+    }
+
+    var tempThresholdEnabled by remember {
+        mutableStateOf(
+            prefs.getBoolean("seat_heat_temp_threshold_enabled", false)
+        )
+    }
+
+    var tempThreshold by remember {
+        mutableStateOf(
+            prefs.getFloat("seat_heat_temp_threshold", 12f)
+        )
+    }
+
+    var expandedDropdown by remember { mutableStateOf(false) }
+    var expandedTempDropdown by remember { mutableStateOf(false) }
+    var outsideTemp by remember { mutableStateOf<Float?>(null) }
+
+    // Динамическое обновление температуры
+    LaunchedEffect(Unit) {
+        scope.launch {
+            while (isActive) {
+                outsideTemp = AutoSeatHeatService.getOutsideTemperature()
+                delay(2000)
+            }
+        }
+    }
+
     fun persist(newMode: String) {
         mode = newMode
         prefs.edit().putString("seat_auto_heat_mode", newMode).apply()
         DriveModeService.logConsole("pref: seat_auto_heat_mode=$newMode")
+    }
+
+    fun persistHeatLevel(newLevel: Int) {
+        heatLevel = newLevel
+        prefs.edit().putInt("seat_heat_level", newLevel).apply()
+        DriveModeService.logConsole("pref: seat_heat_level=$newLevel")
+    }
+
+    fun persistTempThreshold(enabled: Boolean) {
+        tempThresholdEnabled = enabled
+        prefs.edit().putBoolean("seat_heat_temp_threshold_enabled", enabled).apply()
+        DriveModeService.logConsole("pref: seat_heat_temp_threshold_enabled=$enabled")
+    }
+
+    fun persistTempThresholdValue(value: Float) {
+        tempThreshold = value
+        prefs.edit().putFloat("seat_heat_temp_threshold", value).apply()
+        DriveModeService.logConsole("pref: seat_heat_temp_threshold=$value")
     }
 
     Card(
@@ -589,12 +590,152 @@ private fun SeatHeatAutoCard() {
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    AutoSeatHeatService.startTest(ctx)
-                    Toast.makeText(ctx, "Тест автоподогрева отправлен", Toast.LENGTH_SHORT).show()
-                }) {
-                    Text("Тест автоподогрева")
+            // Dropdown для выбора мощности обогрева
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Мощность обогрева:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Box {
+                    Button(onClick = { expandedDropdown = true }) {
+                        Text("Уровень $heatLevel")
+                    }
+                    DropdownMenu(
+                        expanded = expandedDropdown,
+                        onDismissRequest = { expandedDropdown = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Уровень 1") },
+                            onClick = {
+                                persistHeatLevel(1)
+                                expandedDropdown = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Уровень 2") },
+                            onClick = {
+                                persistHeatLevel(2)
+                                expandedDropdown = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Уровень 3") },
+                            onClick = {
+                                persistHeatLevel(3)
+                                expandedDropdown = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Отображение текущей температуры
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Температура снаружи:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = when (outsideTemp) {
+                        null -> "Нет данных"
+                        else -> "${String.format("%.1f", outsideTemp)}°C"
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = when {
+                        outsideTemp == null -> Color.Gray
+                        outsideTemp!! < tempThreshold -> Color(0xFF2196F3)
+                        else -> Color(0xFFFF9800)
+                    }
+                )
+            }
+
+            // Чекбокс для температурного порога (показывается только если есть данные о температуре)
+            if (outsideTemp != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = tempThresholdEnabled,
+                        onCheckedChange = { persistTempThreshold(it) }
+                    )
+                    Text("Включать только при низкой температуре")
+                }
+
+                // Выбор порога температуры (показывается только если чекбокс включен)
+                if (tempThresholdEnabled) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "Порог температуры:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Box {
+                            Button(onClick = { expandedTempDropdown = true }) {
+                                Text("Ниже ${tempThreshold.toInt()}°C")
+                            }
+                            DropdownMenu(
+                                expanded = expandedTempDropdown,
+                                onDismissRequest = { expandedTempDropdown = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Ниже 0°C") },
+                                    onClick = {
+                                        persistTempThresholdValue(0f)
+                                        expandedTempDropdown = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Ниже 5°C") },
+                                    onClick = {
+                                        persistTempThresholdValue(5f)
+                                        expandedTempDropdown = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Ниже 10°C") },
+                                    onClick = {
+                                        persistTempThresholdValue(10f)
+                                        expandedTempDropdown = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Ниже 12°C") },
+                                    onClick = {
+                                        persistTempThresholdValue(12f)
+                                        expandedTempDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(
+                    onClick = {
+                        AutoSeatHeatService.startTest(ctx)
+                        Toast.makeText(ctx, "Тест автоподогрева отправлен", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Тест подогрева")
+                }
+                Button(
+                    onClick = {
+                        val temp = AutoSeatHeatService.getOutsideTemperature()
+                        Toast.makeText(ctx, "Температура: ${temp?.let { String.format("%.1f", it) } ?: "нет данных"}°C. Смотри консоль.", Toast.LENGTH_LONG).show()
+                        DriveModeService.logConsole("=== TEMPERATURE DEBUG TEST ===")
+                        DriveModeService.logConsole("Triggered manual temperature read")
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Тест темп.")
                 }
             }
         }
