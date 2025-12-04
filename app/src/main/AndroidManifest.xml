@@ -20,6 +20,15 @@
         android:name="android.permission.READ_LOGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Запись файлов (дамп свойств, логи) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Для Android 11+ (API 30+) полный доступ к хранилищу -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <!-- Car-related permissions from com.android.car.Manifest.permission -->
     <uses-permission android:name="android.car.permission.BIND_CAR_INPUT_SERVICE" />
     <uses-permission android:name="android.car.permission.BIND_INSTRUMENT_CLUSTER_RENDERER_SERVICE" />
@@ -49,7 +58,6 @@
     <uses-permission android:name="android.car.permission.CONTROL_APP_BLOCKING" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_CLIMATE" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_DOORS" />
-    <uses-permission android:name="android.car.permission.CONTROL_CAR_EXTERIOR_LIGHTS" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_MIRRORS" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_SEATS" />
     <uses-permission android:name="android.car.permission.CONTROL_CAR_WINDOWS" />
@@ -58,6 +66,7 @@
     <uses-permission android:name="android.car.permission.VMS_SUBSCRIBER" />
 
     <application
+        android:name=".DriveModeApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -65,7 +74,9 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DriveMode">
+        android:theme="@style/Theme.DriveMode"
+        android:requestLegacyExternalStorage="true"
+        tools:targetApi="29">
 
         <!-- Библиотека android.car как в VoiceApp -->
         <uses-library
@@ -92,6 +103,13 @@
 
         <service
             android:name=".core.AutoSeatHeatService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+        </service>
+
+        <!-- Сервис мониторинга параметров автомобиля (real-time) -->
+        <service
+            android:name=".core.VehicleMetricsService"
             android:exported="false"
             android:foregroundServiceType="dataSync">
         </service>

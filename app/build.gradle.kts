@@ -63,4 +63,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.car.app:app:1.7.0")
+
+    // Koin для Dependency Injection
+    implementation("io.insert-koin:koin-android:3.5.3")
+    implementation("io.insert-koin:koin-androidx-compose:3.5.3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
 }
