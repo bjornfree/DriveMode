@@ -535,20 +535,17 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
     val ctx = LocalContext.current
 
     // Реактивное получение состояния из ViewModel
-    val heatingActive by viewModel.heatingActive.collectAsState()
+    val heatingState by viewModel.heatingState.collectAsState()
     val currentMode by viewModel.currentMode.collectAsState()
+    val tempThreshold by viewModel.temperatureThreshold.collectAsState()
 
-    // Локальные состояния для UI (будут синхронизированы с ViewModel)
-    var mode by remember { mutableStateOf(currentMode) }
-    var heatLevel by remember { mutableStateOf(2) }
-    var adaptiveHeating by remember { mutableStateOf(false) }
-    var tempThreshold by remember { mutableStateOf(12f) }
-    var tempThresholdEnabled by remember { mutableStateOf(false) }
+    // Извлекаем данные из состояния
+    val isActive = heatingState.isActive
+    val currentTemp = heatingState.currentTemp
 
-    // Синхронизируем currentMode из ViewModel
-    LaunchedEffect(currentMode) {
-        mode = currentMode
-    }
+    // Локальное состояние для UI
+    val mode = currentMode.key  // Преобразуем enum в строку для совместимости
+    val adaptiveHeating = (currentMode == com.bjornfree.drivemode.domain.model.HeatingMode.ADAPTIVE)
 
     Column(
         modifier = Modifier
@@ -566,49 +563,66 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
         // Карточка режима работы
         ModeCard(
             mode = mode,
-            onModeChange = { newMode ->
-                mode = newMode
-                prefs.edit().putString("seat_auto_heat_mode", newMode).apply()
-            }
-        )
-
-        // Карточка настроек мощности
-        HeatLevelCard(
-            heatLevel = heatLevel,
-            enabled = !adaptiveHeating,
-            onHeatLevelChange = { newLevel ->
-                heatLevel = newLevel
-                prefs.edit().putInt("seat_heat_level", newLevel).apply()
-            }
-        )
-
-        // Карточка адаптивного обогрева
-        AdaptiveHeatingCard(
-            enabled = adaptiveHeating,
-            onEnabledChange = { enabled ->
-                adaptiveHeating = enabled
-                prefs.edit().putBoolean("adaptive_heating", enabled).apply()
+            onModeChange = { newModeKey ->
+                val newMode = com.bjornfree.drivemode.domain.model.HeatingMode.fromKey(newModeKey)
+                viewModel.setHeatingMode(newMode)
             }
         )
 
         // Карточка температурного порога
-        if (outsideTemp != null) {
-            TemperatureThresholdCard(
-                enabled = tempThresholdEnabled,
-                threshold = tempThreshold,
-                adaptiveEnabled = adaptiveHeating,
-                onEnabledChange = { enabled ->
-                    tempThresholdEnabled = enabled
-                    prefs.edit().putBoolean("seat_heat_temp_threshold_enabled", enabled).apply()
-                },
-                onThresholdChange = { threshold ->
-                    tempThreshold = threshold
-                    prefs.edit().putFloat("seat_heat_temp_threshold", threshold).apply()
+        TemperatureThresholdCard(
+            enabled = adaptiveHeating,
+            threshold = tempThreshold.toFloat(),
+            adaptiveEnabled = adaptiveHeating,
+            onEnabledChange = { enabled ->
+                // Переключаем режим между ADAPTIVE и OFF
+                val newMode = if (enabled) {
+                    com.bjornfree.drivemode.domain.model.HeatingMode.ADAPTIVE
+                } else {
+                    com.bjornfree.drivemode.domain.model.HeatingMode.OFF
                 }
-            )
+                viewModel.setHeatingMode(newMode)
+            },
+            onThresholdChange = { threshold ->
+                viewModel.setTemperatureThreshold(threshold.toInt())
+            }
+        )
+
+        // Информационная карточка о состоянии
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Текущее состояние",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Подогрев: ${if (isActive) "Активен ✓" else "Неактивен"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (currentTemp != null) {
+                    Text(
+                        "Температура в салоне: ${currentTemp}°C",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (heatingState.reason != null) {
+                    Text(
+                        "Причина: ${heatingState.reason}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
-        // Кнопка теста
+        // Кнопка теста (пока недоступна)
         ElevatedCard(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -624,10 +638,10 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
 
                 FilledTonalButton(
                     onClick = {
-                        AutoSeatHeatService.startTest(ctx)
-                        Toast.makeText(ctx, "Тест подогрева запущен", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "Функция тестирования будет добавлена в следующей версии", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = false
                 ) {
                     Icon(Icons.Default.PlayArrow, "Тест", modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1287,7 +1301,7 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Статус DriveModeService
+            // Статус Car API
             ElevatedCard(
                 modifier = Modifier.weight(1f)
             ) {
@@ -1304,35 +1318,33 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
                             modifier = Modifier
                                 .size(12.dp)
                                 .background(
-                                    color = if (driveModeServiceStatus) Color(0xFF4CAF50) else Color(
-                                        0xFFE53935
-                                    ),
+                                    color = when (carApiStatus) {
+                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> Color(0xFF4CAF50)
+                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> Color(0xFFE53935)
+                                        else -> Color(0xFFFFA726)
+                                    },
                                     shape = CircleShape
                                 )
                         )
                         Text(
-                            "Режимы вождения",
+                            "Car API",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
                     }
-
-                    if (!driveModeServiceStatus) {
-                        FilledTonalButton(
-                            onClick = {
-                                scope.launch {
-                                    DriveModeService.restartService(ctx)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Перезапустить", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    Text(
+                        when (carApiStatus) {
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> "Работает ✓"
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> "Ошибка"
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Stopped -> "Остановлен"
+                            else -> "Неизвестно"
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
 
-            // Статус AutoSeatHeatService
+            // Статус CarPropertyManager
             ElevatedCard(
                 modifier = Modifier.weight(1f)
             ) {
@@ -1349,35 +1361,33 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
                             modifier = Modifier
                                 .size(12.dp)
                                 .background(
-                                    color = if (autoHeatServiceStatus) Color(0xFF4CAF50) else Color(
-                                        0xFFE53935
-                                    ),
+                                    color = when (carManagerStatus) {
+                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> Color(0xFF4CAF50)
+                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> Color(0xFFE53935)
+                                        else -> Color(0xFFFFA726)
+                                    },
                                     shape = CircleShape
                                 )
                         )
                         Text(
-                            "Автоподогрев",
+                            "CarPropertyManager",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
                     }
-
-                    if (!autoHeatServiceStatus) {
-                        FilledTonalButton(
-                            onClick = {
-                                scope.launch {
-                                    AutoSeatHeatService.restartService(ctx)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Перезапустить", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    Text(
+                        when (carManagerStatus) {
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> "Работает ✓"
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> "Ошибка"
+                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Stopped -> "Остановлен"
+                            else -> "Неизвестно"
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
 
-            // Статус VehicleMetricsService
+            // Счетчик обновлений метрик
             ElevatedCard(
                 modifier = Modifier.weight(1f)
             ) {
@@ -1394,31 +1404,20 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
                             modifier = Modifier
                                 .size(12.dp)
                                 .background(
-                                    color = if (vehicleMetricsServiceStatus) Color(0xFF4CAF50) else Color(
-                                        0xFFE53935
-                                    ),
+                                    color = if (metricsUpdateCount > 0) Color(0xFF4CAF50) else Color(0xFFFFA726),
                                     shape = CircleShape
                                 )
                         )
                         Text(
-                            "Параметры авто",
+                            "Обновления метрик",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
                     }
-
-                    if (!vehicleMetricsServiceStatus) {
-                        FilledTonalButton(
-                            onClick = {
-                                scope.launch {
-                                    VehicleMetricsService.restartService(ctx)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Перезапустить", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    Text(
+                        "Счетчик: $metricsUpdateCount",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }
@@ -1441,14 +1440,12 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
                     onClick = {
                         Toast.makeText(
                             ctx,
-                            "Диагностика Топлива!\nПроверь консоль",
+                            "Функция диагностики будет добавлена в следующей версии",
                             Toast.LENGTH_LONG
                         ).show()
-                        scope.launch(Dispatchers.IO) {
-                            AutoSeatHeatService.diagnosticTemperaturesAndRPM()
-                        }
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = false
                 ) {
                     Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1515,20 +1512,18 @@ fun SettingsTab(viewModel: SettingsViewModel) {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            if (demoModeEnabled) "AOSP возвращает тестовые значения" else "Читаем реальные данные",
+                            if (demoMode) "AOSP возвращает тестовые значения" else "Читаем реальные данные",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (demoModeEnabled)
+                            color = if (demoMode)
                                 MaterialTheme.colorScheme.error
                             else
                                 MaterialTheme.colorScheme.primary
                         )
                     }
                     Switch(
-                        checked = demoModeEnabled,
+                        checked = demoMode,
                         onCheckedChange = { enabled ->
-                            // TODO: Implement demo mode toggle via root
-                            demoModeEnabled = enabled
-                            prefs.edit().putBoolean("demo_mode_enabled", enabled).apply()
+                            viewModel.setDemoMode(enabled)
                             Toast.makeText(
                                 ctx,
                                 "Demo Mode ${if (enabled) "включен" else "выключен"}",
