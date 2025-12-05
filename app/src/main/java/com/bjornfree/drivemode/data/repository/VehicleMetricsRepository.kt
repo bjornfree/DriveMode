@@ -298,23 +298,24 @@ class VehicleMetricsRepository(
     private fun readTirePressureData(): TirePressureData? {
         try {
             // Читаем давление и температуру для каждой шины
+            // ИСПРАВЛЕНИЕ: Давление возвращается как Float, конвертируем в Int
             val frontLeft = TireData(
-                pressure = carManager.readIntProperty(VehiclePropertyConstants.TPMS_PRESSURE_FL),
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FL)?.toInt(),
                 temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FL)
             )
 
             val frontRight = TireData(
-                pressure = carManager.readIntProperty(VehiclePropertyConstants.TPMS_PRESSURE_FR),
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FR)?.toInt(),
                 temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FR)
             )
 
             val rearLeft = TireData(
-                pressure = carManager.readIntProperty(VehiclePropertyConstants.TPMS_PRESSURE_RL),
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RL)?.toInt(),
                 temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RL)
             )
 
             val rearRight = TireData(
-                pressure = carManager.readIntProperty(VehiclePropertyConstants.TPMS_PRESSURE_RR),
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RR)?.toInt(),
                 temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RR)
             )
 

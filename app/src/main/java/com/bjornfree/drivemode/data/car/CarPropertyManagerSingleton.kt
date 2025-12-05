@@ -74,13 +74,23 @@ class CarPropertyManagerSingleton(private val context: Context) {
             carInstance = car
             Log.d(TAG, "Car instance created")
 
-            // 3. Подключаемся (если метод есть)
+            // 3. Подключаемся (если метод есть и не подключен)
             try {
-                val connectMethod = carClass!!.getMethod("connect")
-                connectMethod.invoke(car)
-                Log.d(TAG, "Car.connect() called")
+                // Проверяем состояние подключения перед вызовом connect()
+                val isConnectedMethod = carClass!!.getMethod("isConnected")
+                val isConnected = isConnectedMethod.invoke(car) as? Boolean ?: false
+
+                if (!isConnected) {
+                    val connectMethod = carClass!!.getMethod("connect")
+                    connectMethod.invoke(car)
+                    Log.d(TAG, "Car.connect() called")
+                } else {
+                    Log.d(TAG, "Car already connected")
+                }
             } catch (e: NoSuchMethodException) {
                 Log.d(TAG, "Car.connect() not available (optional)")
+            } catch (e: IllegalStateException) {
+                Log.d(TAG, "Car already connecting/connected: ${e.message}")
             }
 
             // 4. Получаем CarPropertyManager через getCarManager("property")
