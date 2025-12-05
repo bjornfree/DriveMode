@@ -49,6 +49,8 @@ import com.bjornfree.drivemode.core.DriveModeService
 import com.bjornfree.drivemode.core.VehicleMetricsService
 import com.bjornfree.drivemode.domain.model.TireData
 import com.bjornfree.drivemode.domain.model.TirePressureData
+import com.bjornfree.drivemode.presentation.viewmodel.*
+import org.koin.androidx.compose.koinViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -64,6 +66,13 @@ import kotlinx.coroutines.withContext
 fun ModernTabletUI() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // Inject ViewModels через Koin
+    val vehicleInfoViewModel: VehicleInfoViewModel = koinViewModel()
+    val autoHeatingViewModel: AutoHeatingViewModel = koinViewModel()
+    val diagnosticsViewModel: DiagnosticsViewModel = koinViewModel()
+    val consoleViewModel: ConsoleViewModel = koinViewModel()
+    val settingsViewModel: SettingsViewModel = koinViewModel()
 
     var selectedTab by remember { mutableStateOf(0) }
     var showAbout by remember { mutableStateOf(false) }
@@ -129,11 +138,11 @@ fun ModernTabletUI() {
                     .padding(24.dp)
             ) {
                 when (selectedTab) {
-                    0 -> VehicleInfoTab()     // Бортовой ПК
-                    1 -> AutoHeatingTab()     // Автоподогрев
-                    2 -> DiagnosticsTab()
-                    3 -> ConsoleTab()
-                    4 -> SettingsTab()
+                    0 -> VehicleInfoTab(viewModel = vehicleInfoViewModel)
+                    1 -> AutoHeatingTab(viewModel = autoHeatingViewModel)
+                    2 -> DiagnosticsTab(viewModel = diagnosticsViewModel)
+                    3 -> ConsoleTab(viewModel = consoleViewModel)
+                    4 -> SettingsTab(viewModel = settingsViewModel)
                 }
             }
         }
@@ -193,50 +202,24 @@ data class TabItem(val title: String, val icon: ImageVector)
  * Вкладка с информацией об автомобиле (бортовой компьютер)
  */
 @Composable
-fun VehicleInfoTab() {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
+fun VehicleInfoTab(viewModel: VehicleInfoViewModel) {
+    // Реактивное получение метрик из ViewModel
+    val metrics by viewModel.vehicleMetrics.collectAsState()
 
-    var cabinTemp by remember { mutableStateOf<Float?>(null) }
-    var ambientTemp by remember { mutableStateOf<Float?>(null) }
-    var oilTemp by remember { mutableStateOf<Float?>(null) }
-    var coolantTemp by remember { mutableStateOf<Float?>(null) }
-    var fuel by remember { mutableStateOf<Float?>(null) }
-    var avgFuel by remember { mutableStateOf<Float?>(null) }
-    var odometer by remember { mutableStateOf<Float?>(null) }
-    var tripMileage by remember { mutableStateOf<Float?>(null) }
-    var tripTime by remember { mutableStateOf<Float?>(null) }
-    var tirePressure by remember { mutableStateOf<TirePressureData?>(null) }
-    var gear by remember { mutableStateOf<String?>(null) }
-    var speed by remember { mutableStateOf<Float?>(null) }
-    var rpm by remember { mutableStateOf<Float?>(null) }
-
-    // Быстрое обновление real-time метрик (коробка передач) - каждые 200мс
-    LaunchedEffect(Unit) {
-        while (true) {
-            gear = VehicleMetricsService.getGear()
-            speed = VehicleMetricsService.getSpeed()
-            rpm = VehicleMetricsService.getRPM()
-            kotlinx.coroutines.delay(200)
-        }
-    }
-
-    // Медленное обновление остальных данных - каждые 5 секунд
-    LaunchedEffect(Unit) {
-        while (true) {
-            cabinTemp = AutoSeatHeatService.getCabinTemperature()
-            ambientTemp = AutoSeatHeatService.getAmbientTemperature()
-            oilTemp = AutoSeatHeatService.getOilTemperature()
-            coolantTemp = AutoSeatHeatService.getCoolantTemperature()
-            fuel = AutoSeatHeatService.getFuel()
-            avgFuel = AutoSeatHeatService.getAverageFuel()
-            odometer = AutoSeatHeatService.getOdometer()
-            tripMileage = AutoSeatHeatService.getTripMileage()
-            tripTime = AutoSeatHeatService.getTripTime()
-            tirePressure = AutoSeatHeatService.getTirePressureData()
-            kotlinx.coroutines.delay(5000)
-        }
-    }
+    // Извлекаем данные из метрик
+    val cabinTemp = metrics.cabinTemperature
+    val ambientTemp = metrics.ambientTemperature
+    val oilTemp = metrics.engineOilTemp
+    val coolantTemp = metrics.coolantTemp
+    val fuel = metrics.fuel?.currentFuelLiters
+    val avgFuel = metrics.averageFuel
+    val odometer = metrics.odometer
+    val tripMileage = metrics.tripMileage
+    val tripTime = metrics.tripTime
+    val tirePressure = metrics.tirePressure
+    val gear = metrics.gear
+    val speed = metrics.speed
+    val rpm = metrics.rpm.toFloat()
 
     Column(
         modifier = Modifier
@@ -548,38 +531,23 @@ fun InfoItem(
 }
 
 @Composable
-fun AutoHeatingTab() {
+fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
     val ctx = LocalContext.current
-    val prefs = ctx.getSharedPreferences("drivemode_prefs", Context.MODE_PRIVATE)
-    val scope = rememberCoroutineScope()
 
-    var mode by remember { mutableStateOf(prefs.getString("seat_auto_heat_mode", "off") ?: "off") }
-    var heatLevel by remember { mutableStateOf(prefs.getInt("seat_heat_level", 2)) }
-    var adaptiveHeating by remember { mutableStateOf(prefs.getBoolean("adaptive_heating", false)) }
-    var tempThreshold by remember {
-        mutableStateOf(
-            prefs.getFloat(
-                "seat_heat_temp_threshold",
-                12f
-            )
-        )
-    }
-    var tempThresholdEnabled by remember {
-        mutableStateOf(
-            prefs.getBoolean(
-                "seat_heat_temp_threshold_enabled",
-                false
-            )
-        )
-    }
-    var outsideTemp by remember { mutableStateOf<Float?>(null) }
+    // Реактивное получение состояния из ViewModel
+    val heatingActive by viewModel.heatingActive.collectAsState()
+    val currentMode by viewModel.currentMode.collectAsState()
 
-    // Обновляем температуру для порога
-    LaunchedEffect(Unit) {
-        while (true) {
-            outsideTemp = AutoSeatHeatService.getCabinTemperature()
-            kotlinx.coroutines.delay(5000)
-        }
+    // Локальные состояния для UI (будут синхронизированы с ViewModel)
+    var mode by remember { mutableStateOf(currentMode) }
+    var heatLevel by remember { mutableStateOf(2) }
+    var adaptiveHeating by remember { mutableStateOf(false) }
+    var tempThreshold by remember { mutableStateOf(12f) }
+    var tempThresholdEnabled by remember { mutableStateOf(false) }
+
+    // Синхронизируем currentMode из ViewModel
+    LaunchedEffect(currentMode) {
+        mode = currentMode
     }
 
     Column(
@@ -1283,22 +1251,17 @@ fun TemperatureThresholdCard(
 }
 
 @Composable
-fun DiagnosticsTab() {
+fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
 
-    var driveModeServiceStatus by remember { mutableStateOf(false) }
-    var autoHeatServiceStatus by remember { mutableStateOf(false) }
-    var vehicleMetricsServiceStatus by remember { mutableStateOf(false) }
+    // Реактивное получение статусов из ViewModel
+    val carApiStatus by viewModel.carApiStatus.collectAsState()
+    val carManagerStatus by viewModel.carManagerStatus.collectAsState()
+    val metricsUpdateCount by viewModel.metricsUpdateCount.collectAsState()
 
-    // Обновляем статусы сервисов каждую секунду
+    // Проверка статусов сервисов
     LaunchedEffect(Unit) {
-        while (true) {
-            driveModeServiceStatus = DriveModeService.getServiceStatus()
-            autoHeatServiceStatus = AutoSeatHeatService.isServiceRunning()
-            vehicleMetricsServiceStatus = VehicleMetricsService.isServiceRunning()
-            kotlinx.coroutines.delay(1000)
-        }
+        viewModel.checkServicesStatus()
     }
 
     Column(
@@ -1497,24 +1460,24 @@ fun DiagnosticsTab() {
 }
 
 @Composable
-fun SettingsTab() {
+fun SettingsTab(viewModel: SettingsViewModel) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val prefs = ctx.getSharedPreferences("drivemode_prefs", Context.MODE_PRIVATE)
 
-    var demoModeEnabled by remember { mutableStateOf(prefs.getBoolean("demo_mode_enabled", true)) }
+    // Реактивное получение настроек из ViewModel
+    val demoMode by viewModel.demoMode.collectAsState()
+    val borderEnabled by viewModel.borderEnabled.collectAsState()
+    val panelEnabled by viewModel.panelEnabled.collectAsState()
 
-    // Состояния разрешений
-    var overlayGranted by remember { mutableStateOf<Boolean?>(null) }
-    var batteryOptimized by remember { mutableStateOf<Boolean?>(null) }
+    // Локальные состояния для разрешений (проверяются периодически)
+    var overlayGranted by remember { mutableStateOf(viewModel.hasSystemAlertWindowPermission()) }
+    var batteryOptimized by remember { mutableStateOf(!viewModel.isBatteryOptimizationIgnored()) }
     var serviceRunning by remember { mutableStateOf(false) }
 
-    // Проверяем разрешения при запуске и каждые 2 секунды
+    // Проверяем разрешения периодически
     LaunchedEffect(Unit) {
         while (true) {
-            overlayGranted = Settings.canDrawOverlays(ctx)
-            val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            batteryOptimized = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == false
+            overlayGranted = viewModel.hasSystemAlertWindowPermission()
+            batteryOptimized = !viewModel.isBatteryOptimizationIgnored()
             serviceRunning = DriveModeService.isRunning
             delay(2000)
         }
@@ -1716,19 +1679,9 @@ fun SettingsTab() {
 }
 
 @Composable
-fun ConsoleTab() {
-    val scope = rememberCoroutineScope()
-    var lines by remember { mutableStateOf<List<String>>(emptyList()) }
-
-    // Автоматическое обновление логов каждые 500мс
-    LaunchedEffect(Unit) {
-        scope.launch {
-            while (isActive) {
-                lines = DriveModeService.consoleSnapshot()
-                delay(500)
-            }
-        }
-    }
+fun ConsoleTab(viewModel: ConsoleViewModel) {
+    // Реактивное получение логов из ViewModel
+    val lines by viewModel.consoleLogs.collectAsState()
 
     Column(
         modifier = Modifier
