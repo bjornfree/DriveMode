@@ -179,19 +179,33 @@ object VehiclePropertyConstants {
     // ========================================
 
     /**
-     * Маппинг кодов передач в человекочитаемые строки
+     * Маппинг кодов передач в человекочитаемые строки.
+     * ВАЖНО: ECARX использует битовые флаги для передач!
+     *
+     * Правильный маппинг (проверено на Geely Coolray):
+     * - 1 (0x01) = N (Neutral)
+     * - 2 (0x02) = R (Reverse)
+     * - 4 (0x04) = P (Park)
+     * - 8 (0x08) = D (Drive)
+     * - 16 (0x10) = 1 (Manual 1st)
+     * - 32 (0x20) = 2 (Manual 2nd)
+     * - 64 (0x40) = 3 (Manual 3rd)
+     * - 128 (0x80) = 4 (Manual 4th)
+     * - 256 (0x100) = 5 (Manual 5th)
+     * - 512 (0x200) = 6 (Manual 6th)
      */
     fun gearToString(gearCode: Int): String = when (gearCode) {
-        16 -> "D"
-        1 -> "1"
-        2 -> "2"
-        3 -> "3"
-        4 -> "4"
-        5 -> "5"
-        6 -> "6"
-        -1 -> "R"
-        0 -> "N"
-        else -> "P"
+        1 -> "N"      // Neutral
+        2 -> "R"      // Reverse
+        4 -> "P"      // Park
+        8 -> "D"      // Drive
+        16 -> "1"     // Manual 1st
+        32 -> "2"     // Manual 2nd
+        64 -> "3"     // Manual 3rd
+        128 -> "4"    // Manual 4th
+        256 -> "5"    // Manual 5th
+        512 -> "6"    // Manual 6th
+        else -> "?"   // Unknown
     }
 
     // ========================================

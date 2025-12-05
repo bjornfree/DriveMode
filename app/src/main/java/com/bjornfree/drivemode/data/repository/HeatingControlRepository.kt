@@ -53,6 +53,10 @@ class HeatingControlRepository(
         Log.i(TAG, "Starting auto heating control...")
         isRunning = true
 
+        // КРИТИЧЕСКИ ВАЖНО: Запускаем мониторинг зажигания и метрик!
+        ignitionRepo.startMonitoring()
+        metricsRepo.startMonitoring()
+
         // Загружаем текущий режим из настроек
         val mode = HeatingMode.fromKey(prefsManager.seatAutoHeatMode)
         val tempThreshold = prefsManager.temperatureThreshold
