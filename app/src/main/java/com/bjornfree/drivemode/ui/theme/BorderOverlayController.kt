@@ -35,11 +35,13 @@ class BorderOverlayController(private val appContext: Context) {
     private var animator: ValueAnimator? = null
 
     // Цвета подсветки по режимам
+    // ОПТИМИЗАЦИЯ: Прямые integer значения вместо Color.parseColor()
+    // Избегаем парсинг строк и создание Color объектов при инициализации
     private val modeColors: Map<String, Int> = mapOf(
-        "eco" to Color.parseColor("#00E676"),        // яркий зелёный (neon eco)
-        "comfort" to Color.parseColor("#00B0FF"),    // насыщенный голубой
-        "sport" to Color.parseColor("#FF0033"),      // агрессивный красный
-        "adaptive" to Color.parseColor("#B388FF")    // яркий фиолетовый
+        "eco" to 0xFF00E676.toInt(),        // яркий зелёный (neon eco)
+        "comfort" to 0xFF00B0FF.toInt(),    // насыщенный голубой
+        "sport" to 0xFFFF0033.toInt(),      // агрессивный красный
+        "adaptive" to 0xFFB388FF.toInt()    // яркий фиолетовый
     )
 
     /**

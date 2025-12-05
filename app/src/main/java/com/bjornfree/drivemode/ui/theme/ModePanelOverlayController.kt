@@ -72,11 +72,13 @@ class ModePanelOverlayController(
 
     private var autoCollapseRunnable: Runnable? = null
 
+    // ОПТИМИЗАЦИЯ: Прямые integer значения вместо Color.parseColor()
+    // Избегаем парсинг строк при инициализации контроллера
     private val modeColors: Map<String, Int> = mapOf(
-        "eco" to Color.parseColor("#4CAF50"),
-        "comfort" to Color.parseColor("#2196F3"),
-        "sport" to Color.parseColor("#FF1744"),
-        "adaptive" to Color.parseColor("#7E57C2")
+        "eco" to 0xFF4CAF50.toInt(),
+        "comfort" to 0xFF2196F3.toInt(),
+        "sport" to 0xFFFF1744.toInt(),
+        "adaptive" to 0xFF7E57C2.toInt()
     )
 
     private val modeSubtitles: Map<String, String> = mapOf(
