@@ -52,9 +52,13 @@ class DriveModeService : Service() {
         private const val VEHICLE_PROPERTY_CHANGWEI_DRIVE_MODE = 779092012
         private const val VEHICLE_PROPERTY_CHANGWEI_SWITCH_DRIVER_MODE = 779092013
 
-        // Буфер последних событий для «консоли» (макс. 100 строк)
+        // Буфер последних событий для «консоли» (макс. 500 строк для удобства диагностики)
         private val _console = java.util.Collections.synchronizedList(mutableListOf<String>())
-        private const val CONSOLE_LIMIT = 100
+        private const val CONSOLE_LIMIT = 500
+
+        // Дедупликация повторяющихся логов
+        private var lastLoggedMessage: String? = null
+        private val logLock = Any()
 
         @JvmStatic fun logConsole(msg: String) {
             val line = "${System.currentTimeMillis()} | $msg"
@@ -62,7 +66,68 @@ class DriveModeService : Service() {
             val overflow = _console.size - CONSOLE_LIMIT
             if (overflow > 0) repeat(overflow) { _console.removeAt(0) }
         }
+
+        /**
+         * Очищает консоль (для диагностических тестов).
+         */
+        @JvmStatic fun clearConsole() {
+            _console.clear()
+            logConsole("=== КОНСОЛЬ ОЧИЩЕНА ===")
+        }
+
+        /**
+         * Логирует сообщение только если оно отличается от предыдущего.
+         * Используется для дедупликации повторяющихся ошибок.
+         */
+        @JvmStatic fun logConsoleOnce(msg: String) {
+            synchronized(logLock) {
+                // Извлекаем "ключ" сообщения - до первого двоеточия или всё сообщение
+                val messageKey = msg.substringBefore(":")
+                if (lastLoggedMessage != messageKey) {
+                    logConsole(msg)
+                    lastLoggedMessage = messageKey
+                }
+            }
+        }
+
+        /**
+         * Сбрасывает состояние дедупликации и логирует сообщение о восстановлении.
+         */
+        @JvmStatic fun resetLogState(component: String) {
+            synchronized(logLock) {
+                if (lastLoggedMessage != null) {
+                    logConsole("$component: ✓ Операция возобновлена успешно")
+                    lastLoggedMessage = null
+                }
+            }
+        }
+
         @JvmStatic fun consoleSnapshot(): List<String> = java.util.Collections.synchronizedList(_console).toList()
+
+        /**
+         * Проверяет статус сервиса мониторинга режимов
+         * @return true если сервис работает нормально
+         */
+        @JvmStatic
+        fun getServiceStatus(): Boolean {
+            return isRunning && instance != null
+        }
+
+        /**
+         * Перезапускает сервис мониторинга режимов
+         */
+        @JvmStatic
+        fun restartService(context: Context) {
+            try {
+                logConsole("DriveModeService: Принудительный перезапуск...")
+                context.stopService(Intent(context, DriveModeService::class.java))
+                Thread.sleep(500)
+                context.startForegroundService(Intent(context, DriveModeService::class.java))
+                logConsole("DriveModeService: Перезапущен успешно")
+            } catch (e: Exception) {
+                logConsole("DriveModeService: Ошибка перезапуска: ${e.message}")
+            }
+        }
 
     }
 
@@ -196,6 +261,15 @@ class DriveModeService : Service() {
             scope.launch(Dispatchers.Main) { onDriveModeDetected(driveMode) }
         }
         return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        logConsole("DriveModeService: onTaskRemoved - перезапускаем сервис")
+
+        // Перезапускаем сервис при удалении задачи (swipe away)
+        val restartIntent = Intent(applicationContext, DriveModeService::class.java)
+        applicationContext.startForegroundService(restartIntent)
     }
 
     override fun onDestroy() {
@@ -432,27 +506,22 @@ class DriveModeService : Service() {
                 if (ignitionState != null) {
                     val isOn = isIgnitionOnLike(ignitionState)
                     isIgnitionOn = isOn
-                    logConsole("ignition: initial state=$ignitionState (isOn=$isOn)")
-
-                    if (isOn) {
-                        withContext(Dispatchers.Main) {
-                            startWatchLoop()
-                        }
-                    } else {
-                        logConsole("ignition: OFF, logcat monitoring paused")
-                    }
+                    logConsole("ignition: начальное состояние=$ignitionState (isOn=$isOn)")
                 } else {
-                    // Если не удалось прочитать - запускаем logcat на всякий случай
-                    logConsole("ignition: unable to read, starting logcat anyway")
-                    withContext(Dispatchers.Main) {
-                        startWatchLoop()
-                    }
+                    logConsole("ignition: не удалось прочитать состояние")
                 }
             } catch (e: Exception) {
-                logConsole("ignition: check error: ${e.javaClass.simpleName}: ${e.message}")
-                // При ошибке запускаем logcat
-                withContext(Dispatchers.Main) {
+                logConsole("ignition: ошибка проверки: ${e.javaClass.simpleName}: ${e.message}")
+            }
+
+            // ВСЕГДА запускаем мониторинг независимо от состояния зажигания - работаем 24/7!
+            withContext(Dispatchers.Main) {
+                logConsole("ignition: запускаем мониторинг (работаем 24/7)")
+                try {
                     startWatchLoop()
+                } catch (e: Exception) {
+                    logConsole("ignition: ОШИБКА запуска мониторинга: ${e.javaClass.simpleName}: ${e.message}")
+                    Log.e("DM", "Failed to start watchLoop", e)
                 }
             }
         }
@@ -464,7 +533,10 @@ class DriveModeService : Service() {
                 try {
                     val ignitionState = carCore.readIgnitionStateRawOrNull()
                     if (ignitionState != null) {
-                        // Успешное чтение - сбрасываем счетчик ошибок
+                        // Успешное чтение - сбрасываем счетчик ошибок и состояние логов
+                        if (ignitionMonitorConsecutiveErrors > 0) {
+                            resetLogState("ignition")
+                        }
                         ignitionMonitorConsecutiveErrors = 0
 
                         val isOn = isIgnitionOnLike(ignitionState)
@@ -474,41 +546,31 @@ class DriveModeService : Service() {
                             logConsole("ignition: changed to ${if (isOn) "ON" else "OFF"} (state=$ignitionState)")
 
                             withContext(Dispatchers.Main) {
-                                if (isOn) {
-                                    // Зажигание включено - запускаем/возобновляем logcat
-                                    if (!isWatching) {
-                                        logConsole("ignition: ON, starting logcat monitoring")
-                                        try {
-                                            startWatchLoop()
-                                        } catch (e: Exception) {
-                                            logConsole("ignition: ERROR starting watchLoop: ${e.javaClass.simpleName}: ${e.message}")
-                                            Log.e("DM", "Failed to start watchLoop on ignition ON", e)
-                                        }
-                                    }
-                                } else {
-                                    // Зажигание выключено - останавливаем logcat
-                                    if (isWatching) {
-                                        logConsole("ignition: OFF, pausing logcat monitoring")
-                                        try {
-                                            watchJob?.cancel()
-                                            watcher.stop()
-                                        } catch (e: Exception) {
-                                            logConsole("ignition: error stopping watcher: ${e.javaClass.simpleName}: ${e.message}")
-                                        }
+                                // ВСЕГДА работаем - независимо от состояния зажигания!
+                                // Запускаем logcat если не работает
+                                if (!isWatching) {
+                                    logConsole("ignition: мониторинг не активен, запускаем (зажигание: ${if (isOn) "ON" else "OFF"})")
+                                    try {
+                                        startWatchLoop()
+                                    } catch (e: Exception) {
+                                        logConsole("ignition: ОШИБКА запуска мониторинга: ${e.javaClass.simpleName}: ${e.message}")
+                                        Log.e("DM", "Failed to start watchLoop", e)
                                     }
                                 }
+                                // НЕ останавливаем logcat при выключении зажигания - работаем 24/7!
                             }
                         }
                     } else {
                         // Не удалось прочитать состояние зажигания
                         ignitionMonitorConsecutiveErrors++
-                        if (ignitionMonitorConsecutiveErrors >= 5) {
-                            logConsole("ignition: WARNING - ${ignitionMonitorConsecutiveErrors} consecutive read failures")
+                        if (ignitionMonitorConsecutiveErrors == 5) {
+                            // Первое предупреждение при 5 ошибках
+                            logConsoleOnce("ignition: WARNING - consecutive read failures")
                         }
 
                         // При множественных ошибках пробуем переинициализировать carCore
                         if (ignitionMonitorConsecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                            logConsole("ignition: ERROR - too many failures, reinitializing CarCore...")
+                            logConsoleOnce("ignition: ERROR - too many failures, reinitializing CarCore...")
                             try {
                                 carCore.release()
                                 delay(2000)
@@ -517,7 +579,7 @@ class DriveModeService : Service() {
                                 ignitionMonitorConsecutiveErrors = 0
                                 logConsole("ignition: CarCore reinitialized successfully")
                             } catch (e: Exception) {
-                                logConsole("ignition: CRITICAL - failed to reinitialize CarCore: ${e.javaClass.simpleName}: ${e.message}")
+                                logConsoleOnce("ignition: CRITICAL - failed to reinitialize CarCore: ${e.javaClass.simpleName}: ${e.message}")
                                 Log.e("DM", "Failed to reinitialize CarCore", e)
                                 showErrorNotification("Критическая ошибка мониторинга зажигания")
                                 delay(10000) // Большая пауза перед следующей попыткой
@@ -526,7 +588,7 @@ class DriveModeService : Service() {
                     }
                 } catch (e: Exception) {
                     ignitionMonitorConsecutiveErrors++
-                    logConsole("ignition: monitor error (#$ignitionMonitorConsecutiveErrors): ${e.javaClass.simpleName}: ${e.message}")
+                    logConsoleOnce("ignition: monitor error (#$ignitionMonitorConsecutiveErrors): ${e.javaClass.simpleName}: ${e.message}")
                     Log.e("DM", "Ignition monitor error", e)
 
                     if (ignitionMonitorConsecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
