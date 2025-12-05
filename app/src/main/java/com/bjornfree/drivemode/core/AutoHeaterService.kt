@@ -161,11 +161,10 @@ class AutoSeatHeatService : Service() {
                 if (state.isActive) {
                     log("Подогрев должен быть активен: ${state.reason}")
                     logToConsole("AutoSeatHeatService: ✓ Активация подогрева (${state.reason})")
-                    activateSeatHeating()
+                    activateSeatHeating(state)
                 } else {
                     log("Подогрев должен быть неактивен: ${state.reason}")
-                    // Можно опционально деактивировать подогрев
-                    // deactivateSeatHeating()
+                    deactivateSeatHeating(state)
                 }
             }
         }
@@ -175,18 +174,43 @@ class AutoSeatHeatService : Service() {
 
     /**
      * Активирует подогрев сидений через Car HVAC API.
+     * @param state состояние подогрева с информацией о режиме и уровне
      */
-    private fun activateSeatHeating() {
+    private fun activateSeatHeating(state: com.bjornfree.drivemode.domain.model.HeatingState) {
         try {
             if (carPropertyManagerObj == null) {
                 log("Car Property Manager недоступен")
                 return
             }
 
-            // Пытаемся установить температуру подогрева сидений
-            // VehiclePropertyIds.HVAC_SEAT_TEMPERATURE
-            // Значения обычно: 0 = off, 1 = low, 2 = medium, 3 = high
-            val hvacValue = 2 // medium heating
+            // Определяем уровень подогрева
+            val hvacLevel = if (state.adaptiveHeating) {
+                // Адаптивный режим - уровень зависит от температуры
+                val temp = state.currentTemp
+                when {
+                    temp == null -> 2                    // Нет данных - средний
+                    temp <= 0f -> 3                     // ≤ 0°C - максимальный
+                    temp < 5f -> 2                      // < 5°C - средний
+                    temp < 10f -> 1                     // < 10°C - низкий
+                    else -> 0                           // ≥ 10°C - выключено
+                }
+            } else {
+                // Фиксированный уровень из настроек
+                state.heatingLevel
+            }
+
+            // Определяем area ID на основе режима
+            val areas = when (state.mode.key) {
+                "driver" -> listOf(1)      // Только водитель
+                "passenger" -> listOf(4)   // Только пассажир
+                "both" -> listOf(1, 4)     // Оба
+                else -> emptyList()
+            }
+
+            if (areas.isEmpty()) {
+                log("Режим OFF - пропускаем активацию")
+                return
+            }
 
             val managerClass = carPropertyManagerObj!!.javaClass
             val setIntPropertyMethod = managerClass.getMethod(
@@ -196,16 +220,29 @@ class AutoSeatHeatService : Service() {
                 Int::class.javaPrimitiveType
             )
 
-            // Устанавливаем для водительского сиденья (area 1)
-            setIntPropertyMethod.invoke(
-                carPropertyManagerObj,
-                VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
-                1, // driver seat area
-                hvacValue
-            )
+            // Устанавливаем подогрев для нужных сидений
+            var successCount = 0
+            for (area in areas) {
+                try {
+                    setIntPropertyMethod.invoke(
+                        carPropertyManagerObj,
+                        VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
+                        area,
+                        hvacLevel
+                    )
+                    log("Подогрев установлен: area=$area, level=$hvacLevel")
+                    successCount++
+                } catch (e: Exception) {
+                    log("⚠ Area $area не поддерживается: ${e.message}")
+                    // Не падаем, продолжаем для других area
+                }
+            }
 
-            log("Подогрев сидений активирован (уровень: $hvacValue)")
-            logToConsole("AutoSeatHeatService: 🔥 Подогрев активирован")
+            if (successCount > 0) {
+                logToConsole("AutoSeatHeatService: 🔥 Подогрев ${state.mode.displayName}, уровень $hvacLevel")
+            } else {
+                logToConsole("AutoSeatHeatService: ⚠ Не удалось активировать подогрев (area не поддерживаются)")
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка активации подогрева", e)
@@ -215,10 +252,19 @@ class AutoSeatHeatService : Service() {
 
     /**
      * Деактивирует подогрев сидений.
+     * @param state состояние подогрева с информацией о режиме
      */
-    private fun deactivateSeatHeating() {
+    private fun deactivateSeatHeating(state: com.bjornfree.drivemode.domain.model.HeatingState) {
         try {
             if (carPropertyManagerObj == null) return
+
+            // Определяем area ID на основе режима
+            val areas = when (state.mode.key) {
+                "driver" -> listOf(1)      // Только водитель
+                "passenger" -> listOf(4)   // Только пассажир
+                "both" -> listOf(1, 4)     // Оба
+                else -> listOf(1, 4)       // OFF - выключаем все
+            }
 
             val managerClass = carPropertyManagerObj!!.javaClass
             val setIntPropertyMethod = managerClass.getMethod(
@@ -228,13 +274,21 @@ class AutoSeatHeatService : Service() {
                 Int::class.javaPrimitiveType
             )
 
-            // Устанавливаем 0 = off
-            setIntPropertyMethod.invoke(
-                carPropertyManagerObj,
-                VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
-                1,
-                0
-            )
+            // Выключаем подогрев для всех нужных сидений
+            for (area in areas) {
+                try {
+                    setIntPropertyMethod.invoke(
+                        carPropertyManagerObj,
+                        VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
+                        area,
+                        0  // 0 = off
+                    )
+                    log("Подогрев выключен: area=$area")
+                } catch (e: Exception) {
+                    log("⚠ Area $area не поддерживается при выключении: ${e.message}")
+                    // Не падаем, продолжаем для других area
+                }
+            }
 
             log("Подогрев сидений деактивирован")
 

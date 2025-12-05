@@ -436,7 +436,8 @@ fun VehicleInfoTab(viewModel: VehicleInfoViewModel) {
                         }
                     )
 
-                    val range = if (fuel != null && avgFuel != null && avgFuel!! > 0) {
+                    val exactRange = metrics.fuel?.rangeKm
+                    val range = exactRange ?: if (fuel != null && avgFuel != null && avgFuel!! > 0) {
                         (fuel!! / avgFuel!!) * 100
                     } else null
 
@@ -538,6 +539,9 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
     val heatingState by viewModel.heatingState.collectAsState()
     val currentMode by viewModel.currentMode.collectAsState()
     val tempThreshold by viewModel.temperatureThreshold.collectAsState()
+    val adaptiveHeating by viewModel.adaptiveHeating.collectAsState()
+    val heatingLevel by viewModel.heatingLevel.collectAsState()
+    val checkTempOnceOnStartup by viewModel.checkTempOnceOnStartup.collectAsState()
 
     // Извлекаем данные из состояния
     val isActive = heatingState.isActive
@@ -545,7 +549,6 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
 
     // Локальное состояние для UI
     val mode = currentMode.key  // Преобразуем enum в строку для совместимости
-    val adaptiveHeating = (currentMode == com.bjornfree.drivemode.domain.model.HeatingMode.ADAPTIVE)
 
     Column(
         modifier = Modifier
@@ -569,24 +572,39 @@ fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
             }
         )
 
-        // Карточка температурного порога
-        TemperatureThresholdCard(
+        // Карточка адаптивного режима
+        AdaptiveHeatingCard(
             enabled = adaptiveHeating,
-            threshold = tempThreshold.toFloat(),
-            adaptiveEnabled = adaptiveHeating,
-            onEnabledChange = { enabled ->
-                // Переключаем режим между ADAPTIVE и OFF
-                val newMode = if (enabled) {
-                    com.bjornfree.drivemode.domain.model.HeatingMode.ADAPTIVE
-                } else {
-                    com.bjornfree.drivemode.domain.model.HeatingMode.OFF
-                }
-                viewModel.setHeatingMode(newMode)
-            },
-            onThresholdChange = { threshold ->
-                viewModel.setTemperatureThreshold(threshold.toInt())
+            onEnabledChange = { enabled: Boolean ->
+                viewModel.setAdaptiveHeating(enabled)
             }
         )
+
+        // Карточка "проверка температуры только при запуске"
+        CheckTempOnceOnStartupCard(
+            enabled = checkTempOnceOnStartup,
+            onEnabledChange = { enabled ->
+                viewModel.setCheckTempOnceOnStartup(enabled)
+            }
+        )
+
+        // Карточка температурного порога (только если не адаптивный режим)
+        if (!adaptiveHeating) {
+            TemperatureThresholdCard(
+                threshold = tempThreshold.toFloat(),
+                onThresholdChange = { threshold ->
+                    viewModel.setTemperatureThreshold(threshold.toInt())
+                }
+            )
+
+            // Карточка выбора уровня подогрева
+            HeatingLevelCard(
+                level = heatingLevel,
+                onLevelChange = { level ->
+                    viewModel.setHeatingLevel(level)
+                }
+            )
+        }
 
         // Информационная карточка о состоянии
         ElevatedCard(
@@ -903,7 +921,7 @@ fun TirePressureDisplay(tirePressureData: TirePressureData?) {
             .fillMaxWidth()
             .fillMaxHeight() // Заполняем всю доступную высоту
             .background(
-                Color.White,
+                MaterialTheme.colorScheme.surface,
                 androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
             )
             .padding(16.dp),
@@ -913,7 +931,7 @@ fun TirePressureDisplay(tirePressureData: TirePressureData?) {
             "Давление в шинах",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = Color.Gray
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -1014,7 +1032,7 @@ fun TireItem(label: String, tire: TireData, modifier: Modifier = Modifier) {
         Text(
             text = fullLabel,
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFFB0BEC5), // Более светлый серый для читаемости
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.Medium
         )
 
@@ -1032,7 +1050,7 @@ fun TireItem(label: String, tire: TireData, modifier: Modifier = Modifier) {
             Text(
                 text = if (temperature != null) "${temperature}°C" else "—",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (temperature != null) Color.White else Color(0xFFB0BEC5)
+                color = if (temperature != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -1149,12 +1167,13 @@ fun AdaptiveHeatingCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Адаптивный подогрев",
+                        "Адаптивный режим",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "Автоматически выбирает мощность по температуре",
+                        if (enabled) "Уровень подогрева зависит от температуры (0-10°C)"
+                        else "Фиксированный уровень подогрева + температурный порог",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1164,52 +1183,14 @@ fun AdaptiveHeatingCard(
                     onCheckedChange = onEnabledChange
                 )
             }
-
-            if (enabled) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        "Правила адаптивного обогрева:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        "• Температура ≥ 10°C — обогрев отключен",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "• Температура < 10°C — уровень 1",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "• Температура < 5°C — уровень 2",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "• Температура ≤ 0°C — уровень 3",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
         }
     }
 }
 
 @Composable
-fun TemperatureThresholdCard(
+fun CheckTempOnceOnStartupCard(
     enabled: Boolean,
-    threshold: Float,
-    adaptiveEnabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    onThresholdChange: (Float) -> Unit
+    onEnabledChange: (Boolean) -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth()
@@ -1225,40 +1206,101 @@ fun TemperatureThresholdCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Температурный порог",
+                        "Проверка только при запуске",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (adaptiveEnabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        else MaterialTheme.colorScheme.onSurface
+                        fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        if (adaptiveEnabled) "Отключено: используется адаптивный режим"
-                        else "Включать только при низкой температуре",
+                        if (enabled) "Подогрев включается/выключается только один раз при запуске двигателя"
+                        else "Постоянный мониторинг температуры (может включаться/выключаться во время поездки)",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (adaptiveEnabled) MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Switch(
                     checked = enabled,
-                    onCheckedChange = onEnabledChange,
-                    enabled = !adaptiveEnabled
+                    onCheckedChange = onEnabledChange
                 )
             }
+        }
+    }
+}
 
-            if (enabled && !adaptiveEnabled) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Порог: ниже ${threshold.toInt()}°C",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Slider(
-                        value = threshold,
-                        onValueChange = onThresholdChange,
-                        valueRange = 0f..15f,
-                        steps = 14
-                    )
-                }
+@Composable
+fun TemperatureThresholdCard(
+    threshold: Float,
+    onThresholdChange: (Float) -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Температурный порог",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Подогрев включается при температуре ниже порога",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Порог: ниже ${threshold.toInt()}°C",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = threshold,
+                    onValueChange = onThresholdChange,
+                    valueRange = 5f..20f,
+                    steps = 14
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HeatingLevelCard(
+    level: Int,
+    onLevelChange: (Int) -> Unit
+) {
+    val levelNames = listOf("Выкл", "Низкий", "Средний", "Высокий")
+
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Уровень подогрева",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Фиксированный уровень подогрева сидений",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Уровень: ${levelNames.getOrElse(level) { "?" }} ($level)",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = level.toFloat(),
+                    onValueChange = { onLevelChange(it.toInt()) },
+                    valueRange = 0f..3f,
+                    steps = 2
+                )
             }
         }
     }
@@ -1438,14 +1480,15 @@ fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
 
                 FilledTonalButton(
                     onClick = {
+                        val report = viewModel.testFuelDiagnostics()
                         Toast.makeText(
                             ctx,
-                            "Функция диагностики будет добавлена в следующей версии",
-                            Toast.LENGTH_LONG
+                            "Отчет создан. Проверьте консоль для деталей.",
+                            Toast.LENGTH_SHORT
                         ).show()
+                        android.util.Log.i("DiagnosticsTab", report)
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = false
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))

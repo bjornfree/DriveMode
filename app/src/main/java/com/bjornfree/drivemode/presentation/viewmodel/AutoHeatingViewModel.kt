@@ -52,6 +52,24 @@ class AutoHeatingViewModel(
     private val _temperatureThreshold = MutableStateFlow(heatingRepo.getTemperatureThreshold())
     val temperatureThreshold: StateFlow<Int> = _temperatureThreshold.asStateFlow()
 
+    /**
+     * Адаптивный режим включен.
+     */
+    private val _adaptiveHeating = MutableStateFlow(heatingRepo.isAdaptiveEnabled())
+    val adaptiveHeating: StateFlow<Boolean> = _adaptiveHeating.asStateFlow()
+
+    /**
+     * Уровень подогрева (0-3).
+     */
+    private val _heatingLevel = MutableStateFlow(heatingRepo.getHeatingLevel())
+    val heatingLevel: StateFlow<Int> = _heatingLevel.asStateFlow()
+
+    /**
+     * Проверять температуру только при запуске двигателя.
+     */
+    private val _checkTempOnceOnStartup = MutableStateFlow(heatingRepo.isCheckTempOnceOnStartup())
+    val checkTempOnceOnStartup: StateFlow<Boolean> = _checkTempOnceOnStartup.asStateFlow()
+
     init {
         // Запускаем автоподогрев при создании ViewModel
         startAutoHeating()
@@ -91,36 +109,51 @@ class AutoHeatingViewModel(
     }
 
     /**
+     * Включает/выключает адаптивный режим.
+     *
+     * @param enabled true для адаптивного режима
+     */
+    fun setAdaptiveHeating(enabled: Boolean) {
+        viewModelScope.launch {
+            heatingRepo.setAdaptiveHeating(enabled)
+            _adaptiveHeating.value = enabled
+        }
+    }
+
+    /**
+     * Устанавливает уровень подогрева.
+     *
+     * @param level уровень подогрева (0-3)
+     */
+    fun setHeatingLevel(level: Int) {
+        viewModelScope.launch {
+            heatingRepo.setHeatingLevel(level)
+            _heatingLevel.value = level
+        }
+    }
+
+    /**
+     * Включает/выключает режим "проверка температуры только при запуске".
+     *
+     * @param enabled true для проверки только при запуске
+     */
+    fun setCheckTempOnceOnStartup(enabled: Boolean) {
+        viewModelScope.launch {
+            heatingRepo.setCheckTempOnceOnStartup(enabled)
+            _checkTempOnceOnStartup.value = enabled
+        }
+    }
+
+    /**
      * Получает доступные режимы подогрева для UI.
      */
     fun getAvailableModes(): List<HeatingMode> {
         return listOf(
             HeatingMode.OFF,
-            HeatingMode.ADAPTIVE,
-            HeatingMode.ALWAYS
+            HeatingMode.DRIVER,
+            HeatingMode.PASSENGER,
+            HeatingMode.BOTH
         )
-    }
-
-    /**
-     * Получает человекочитаемое название режима.
-     */
-    fun getModeName(mode: HeatingMode): String {
-        return when (mode) {
-            HeatingMode.OFF -> "Выключен"
-            HeatingMode.ADAPTIVE -> "Адаптивный"
-            HeatingMode.ALWAYS -> "Всегда включен"
-        }
-    }
-
-    /**
-     * Получает описание режима.
-     */
-    fun getModeDescription(mode: HeatingMode): String {
-        return when (mode) {
-            HeatingMode.OFF -> "Подогрев сидений выключен"
-            HeatingMode.ADAPTIVE -> "Включается при температуре ниже порога"
-            HeatingMode.ALWAYS -> "Включается всегда при запуске двигателя"
-        }
     }
 
     /**

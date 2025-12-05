@@ -153,8 +153,7 @@ class VehicleMetricsRepository(
      * Читает температуру охлаждающей жидкости (°C).
      */
     private fun readCoolantTemp(): Float? {
-        val raw = carManager.readIntProperty(VehiclePropertyConstants.COOLANT_TEMP) ?: return null
-        return VehiclePropertyConstants.rawToCelsius(raw)
+        return carManager.readFloatProperty(VehiclePropertyConstants.COOLANT_TEMP)
     }
 
     /**
@@ -167,10 +166,11 @@ class VehicleMetricsRepository(
     /**
      * Читает обороты двигателя (RPM).
      * Консолидация из VehicleMetricsService
+     * Формула: raw / 4
      */
     private fun readRPM(): Int? {
         val raw = carManager.readIntProperty(VehiclePropertyConstants.ENGINE_RPM) ?: return null
-        return VehiclePropertyConstants.rawToRPM(raw)
+        return raw / 4
     }
 
     /**
@@ -282,7 +282,7 @@ class VehicleMetricsRepository(
         }
 
         // Емкость бака для Geely Binyue L / Coolray
-        val capacityLiters = 50f
+        val capacityLiters = 45f
 
         return FuelData(
             rangeKm = rangeKm,
@@ -298,25 +298,26 @@ class VehicleMetricsRepository(
     private fun readTirePressureData(): TirePressureData? {
         try {
             // Читаем давление и температуру для каждой шины
-            // ИСПРАВЛЕНИЕ: Давление возвращается как Float, конвертируем в Int
+            // Давление возвращается как Float, конвертируем в Int
+            // Температура: преобразуем из °F в °C
             val frontLeft = TireData(
                 pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FL)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FL)
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FL)?.let { ((it - 32) * 5) / 9 }
             )
 
             val frontRight = TireData(
                 pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FR)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FR)
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FR)?.let { ((it - 32) * 5) / 9 }
             )
 
             val rearLeft = TireData(
                 pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RL)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RL)
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RL)?.let { ((it - 32) * 5) / 9 }
             )
 
             val rearRight = TireData(
                 pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RR)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RR)
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RR)?.let { ((it - 32) * 5) / 9 }
             )
 
             // Возвращаем только если хотя бы одна шина имеет данные

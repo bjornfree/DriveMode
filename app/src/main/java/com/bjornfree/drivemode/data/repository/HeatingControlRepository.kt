@@ -40,6 +40,12 @@ class HeatingControlRepository(
     @Volatile
     private var isRunning = false
 
+    // Отслеживаем предыдущее состояние зажигания для детекта включения
+    private var lastIgnitionOn = false
+
+    // Флаг что решение о подогреве уже принято при этом включении зажигания
+    private var heatingDecisionMade = false
+
     /**
      * Запускает логику автоподогрева.
      * Слушает изменения зажигания и температуры, принимает решения.
@@ -71,44 +77,76 @@ class HeatingControlRepository(
             }.collect { (ignition, metrics) ->
 
                 val currentMode = HeatingMode.fromKey(prefsManager.seatAutoHeatMode)
+                val isAdaptive = prefsManager.adaptiveHeating
                 val threshold = prefsManager.temperatureThreshold
                 val cabinTemp = metrics.cabinTemperature
+                val checkOnce = prefsManager.checkTempOnceOnStartup
+
+                // Детектируем включение зажигания (переход с OFF на ON)
+                val ignitionJustTurnedOn = ignition.isOn && !lastIgnitionOn
+                lastIgnitionOn = ignition.isOn
+
+                // Сбрасываем флаг решения при выключении зажигания
+                if (!ignition.isOn) {
+                    heatingDecisionMade = false
+                }
+
+                // Если режим "проверка только при запуске" и решение уже принято - не меняем состояние
+                if (checkOnce && heatingDecisionMade && ignition.isOn) {
+                    // Пропускаем обновление, оставляем текущее состояние
+                    return@collect
+                }
+
+                // Помечаем что решение принято (если зажигание включено)
+                if (ignition.isOn) {
+                    heatingDecisionMade = true
+                }
 
                 // Определяем должен ли быть активен подогрев
-                val shouldBeActive = when (currentMode) {
-                    HeatingMode.OFF -> {
-                        // Режим выключен - ничего не делаем
-                        false
-                    }
-
-                    HeatingMode.ALWAYS -> {
-                        // Всегда включен при работающем зажигании
-                        ignition.isOn
-                    }
-
-                    HeatingMode.ADAPTIVE -> {
-                        // Включается если зажигание ON и температура ниже порога
-                        if (ignition.isOn && cabinTemp != null) {
-                            cabinTemp < threshold
+                // Логика как в старой версии (AutoHeaterService.kt.backup lines 1225-1289)
+                val shouldBeActive = if (currentMode == HeatingMode.OFF) {
+                    // Режим выключен - ничего не делаем
+                    false
+                } else if (!ignition.isOn) {
+                    // Зажигание выключено - подогрев не нужен
+                    false
+                } else {
+                    // Режим driver/passenger/both + зажигание ON
+                    if (isAdaptive) {
+                        // ПРИОРИТЕТ 1: Адаптивный режим - порог температуры игнорируется!
+                        // Включаем если температура салона < 10°C
+                        if (cabinTemp == null) {
+                            false // Температура недоступна - на всякий случай включаем
                         } else {
-                            false
+                            cabinTemp < 10f // Адаптивный порог жестко закодирован
+                        }
+                    } else {
+                        // ПРИОРИТЕТ 2: Обычный режим - проверяем температурный порог
+                        if (cabinTemp == null) {
+                            true // Температура недоступна - включаем
+                        } else {
+                            cabinTemp < threshold // Используем настраиваемый порог
                         }
                     }
                 }
 
                 // Обновляем state
                 val reason = when {
-                    !ignition.isOn -> "Ignition OFF"
-                    currentMode == HeatingMode.OFF -> "Mode: OFF"
-                    currentMode == HeatingMode.ALWAYS -> "Mode: ALWAYS"
-                    cabinTemp == null -> "Temperature unavailable"
-                    cabinTemp < threshold -> "Temperature ${cabinTemp}°C < ${threshold}°C"
-                    else -> "Temperature ${cabinTemp}°C >= ${threshold}°C"
+                    !ignition.isOn -> "Зажигание выключено"
+                    currentMode == HeatingMode.OFF -> "Режим: выключен"
+                    isAdaptive && cabinTemp == null -> "[Адаптив] Температура недоступна → включено"
+                    isAdaptive && cabinTemp!! < 10f -> "[Адаптив] Температура ${cabinTemp.toInt()}°C < 10°C → включено"
+                    isAdaptive -> "[Адаптив] Температура ${cabinTemp?.toInt()}°C ≥ 10°C → выключено"
+                    cabinTemp == null -> "[Порог] Температура недоступна → включено"
+                    cabinTemp < threshold -> "[Порог] Температура ${cabinTemp.toInt()}°C < ${threshold}°C → включено"
+                    else -> "[Порог] Температура ${cabinTemp.toInt()}°C ≥ ${threshold}°C → выключено"
                 }
 
                 _heatingState.value = HeatingState(
                     isActive = shouldBeActive,
                     mode = currentMode,
+                    adaptiveHeating = isAdaptive,
+                    heatingLevel = prefsManager.heatingLevel,
                     reason = reason,
                     currentTemp = cabinTemp,
                     temperatureThreshold = threshold
@@ -168,6 +206,54 @@ class HeatingControlRepository(
      */
     fun getTemperatureThreshold(): Int {
         return prefsManager.temperatureThreshold
+    }
+
+    /**
+     * Проверяет включен ли адаптивный режим.
+     */
+    fun isAdaptiveEnabled(): Boolean {
+        return prefsManager.adaptiveHeating
+    }
+
+    /**
+     * Включает/выключает адаптивный режим.
+     * @param enabled true для адаптивного режима
+     */
+    fun setAdaptiveHeating(enabled: Boolean) {
+        Log.i(TAG, "Setting adaptive heating to: $enabled")
+        prefsManager.adaptiveHeating = enabled
+    }
+
+    /**
+     * Устанавливает уровень подогрева (0-3).
+     * @param level уровень подогрева (0=off, 1=low, 2=medium, 3=high)
+     */
+    fun setHeatingLevel(level: Int) {
+        Log.i(TAG, "Setting heating level to: $level")
+        prefsManager.heatingLevel = level
+    }
+
+    /**
+     * Получает текущий уровень подогрева.
+     */
+    fun getHeatingLevel(): Int {
+        return prefsManager.heatingLevel
+    }
+
+    /**
+     * Включает/выключает режим "проверка температуры только при запуске".
+     * @param enabled true для проверки только при запуске
+     */
+    fun setCheckTempOnceOnStartup(enabled: Boolean) {
+        Log.i(TAG, "Setting checkTempOnceOnStartup to: $enabled")
+        prefsManager.checkTempOnceOnStartup = enabled
+    }
+
+    /**
+     * Проверяет включен ли режим "проверка только при запуске".
+     */
+    fun isCheckTempOnceOnStartup(): Boolean {
+        return prefsManager.checkTempOnceOnStartup
     }
 
     /**

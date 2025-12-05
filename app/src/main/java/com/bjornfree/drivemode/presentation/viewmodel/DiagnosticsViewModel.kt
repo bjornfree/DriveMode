@@ -154,6 +154,31 @@ class DiagnosticsViewModel(
             else -> ServiceStatus.Unknown
         }
     }
+
+    /**
+     * Тест диагностики топлива.
+     * Выводит текущие значения всех свойств связанных с топливом.
+     */
+    fun testFuelDiagnostics(): String {
+        addDiagnosticMessage("Starting fuel diagnostics test...")
+
+        val report = StringBuilder()
+        report.appendLine("=== FUEL DIAGNOSTICS REPORT ===")
+        report.appendLine()
+
+        // Текущие метрики
+        val metrics = metricsRepo.vehicleMetrics.value
+        report.appendLine("Current Metrics:")
+        report.appendLine("  Range Remaining: ${metrics.rangeRemaining ?: "N/A"} km")
+        report.appendLine("  Average Fuel: ${metrics.averageFuel ?: "N/A"} L/100km")
+        report.appendLine("  Fuel Data: ${metrics.fuel?.let {
+            "Range=${it.rangeKm}km, Current=${it.currentFuelLiters}L, Capacity=${it.capacityLiters}L"
+        } ?: "N/A"}")
+        report.appendLine()
+
+        addDiagnosticMessage("Fuel diagnostics test completed")
+        return report.toString()
+    }
 }
 
 /**

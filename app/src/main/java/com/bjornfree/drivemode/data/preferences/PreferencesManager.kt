@@ -24,7 +24,10 @@ class PreferencesManager(context: Context) {
 
         // Ключи preferences
         private const val KEY_SEAT_AUTO_HEAT_MODE = "seat_auto_heat_mode"
+        private const val KEY_ADAPTIVE_HEATING = "adaptive_heating"
         private const val KEY_TEMP_THRESHOLD = "temp_threshold"
+        private const val KEY_HEATING_LEVEL = "heating_level"
+        private const val KEY_CHECK_TEMP_ONCE_ON_STARTUP = "check_temp_once_on_startup"
         private const val KEY_LAUNCH_COUNT = "launch_count"
         private const val KEY_LAST_IGNITION_STATE = "last_ignition_state"
         private const val KEY_LAST_IGNITION_TIMESTAMP = "last_ignition_timestamp"
@@ -43,12 +46,23 @@ class PreferencesManager(context: Context) {
 
     /**
      * Режим автоподогрева сидений.
-     * Возможные значения: "off", "adaptive", "always"
+     * Возможные значения: "off", "driver", "passenger", "both"
      */
     var seatAutoHeatMode: String
         get() = prefs.getString(KEY_SEAT_AUTO_HEAT_MODE, "off") ?: "off"
         set(value) {
             prefs.edit().putString(KEY_SEAT_AUTO_HEAT_MODE, value).apply()
+        }
+
+    /**
+     * Адаптивный режим подогрева.
+     * Если true - уровень подогрева зависит от температуры в салоне.
+     * Если false - фиксированный уровень (2).
+     */
+    var adaptiveHeating: Boolean
+        get() = prefs.getBoolean(KEY_ADAPTIVE_HEATING, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_ADAPTIVE_HEATING, value).apply()
         }
 
     /**
@@ -59,6 +73,28 @@ class PreferencesManager(context: Context) {
         get() = prefs.getInt(KEY_TEMP_THRESHOLD, 15)
         set(value) {
             prefs.edit().putInt(KEY_TEMP_THRESHOLD, value).apply()
+        }
+
+    /**
+     * Уровень подогрева (0-3).
+     * 0 = off, 1 = low, 2 = medium, 3 = high
+     * По умолчанию 2 (medium).
+     */
+    var heatingLevel: Int
+        get() = prefs.getInt(KEY_HEATING_LEVEL, 2)
+        set(value) {
+            prefs.edit().putInt(KEY_HEATING_LEVEL, value.coerceIn(0, 3)).apply()
+        }
+
+    /**
+     * Проверять температуру только один раз при запуске двигателя.
+     * Если true - подогрев включается/выключается только при включении зажигания.
+     * Если false - постоянный мониторинг температуры (может включаться/выключаться во время поездки).
+     */
+    var checkTempOnceOnStartup: Boolean
+        get() = prefs.getBoolean(KEY_CHECK_TEMP_ONCE_ON_STARTUP, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_CHECK_TEMP_ONCE_ON_STARTUP, value).apply()
         }
 
     // ========================================

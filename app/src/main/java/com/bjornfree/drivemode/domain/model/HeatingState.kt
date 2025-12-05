@@ -14,9 +14,23 @@ data class HeatingState(
 
     /**
      * Режим автоподогрева.
-     * Возможные значения: "off", "adaptive", "always"
+     * Возможные значения: "off", "driver", "passenger", "both"
      */
     val mode: HeatingMode = HeatingMode.OFF,
+
+    /**
+     * Адаптивный режим включен.
+     * Если true - уровень подогрева зависит от температуры.
+     * Если false - фиксированный уровень.
+     */
+    val adaptiveHeating: Boolean = false,
+
+    /**
+     * Уровень подогрева (0-3).
+     * 0 = off, 1 = low, 2 = medium, 3 = high
+     * Используется когда adaptiveHeating = false
+     */
+    val heatingLevel: Int = 2,
 
     /**
      * Причина включения/выключения подогрева.
@@ -49,22 +63,28 @@ data class HeatingState(
 
 /**
  * Enum для режимов автоподогрева.
+ * Совместимо со старой версией (driver/passenger/both/off).
  */
-enum class HeatingMode(val key: String) {
+enum class HeatingMode(val key: String, val displayName: String) {
     /**
      * Подогрев выключен.
      */
-    OFF("off"),
+    OFF("off", "Выключен"),
 
     /**
-     * Адаптивный режим - включается на основе температуры.
+     * Подогрев только водительского сиденья.
      */
-    ADAPTIVE("adaptive"),
+    DRIVER("driver", "Водитель"),
 
     /**
-     * Всегда включен при старте двигателя.
+     * Подогрев только пассажирского сиденья.
      */
-    ALWAYS("always");
+    PASSENGER("passenger", "Пассажир"),
+
+    /**
+     * Подогрев обоих сидений.
+     */
+    BOTH("both", "Оба");
 
     companion object {
         /**
