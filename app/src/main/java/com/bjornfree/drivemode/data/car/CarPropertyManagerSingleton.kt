@@ -42,6 +42,14 @@ class CarPropertyManagerSingleton(private val context: Context) {
     @Volatile
     private var isInitialized = false
 
+    // Флаг недоступности Car API (например, на эмуляторе)
+    @Volatile
+    private var carApiUnavailable = false
+
+    // Флаг для логирования недоступности только один раз
+    @Volatile
+    private var unavailabilityLogged = false
+
     // Кэш для reflection methods (ключевая оптимизация)
     private val methodCache = ConcurrentHashMap<String, Method>()
 
@@ -57,6 +65,11 @@ class CarPropertyManagerSingleton(private val context: Context) {
      */
     @Synchronized
     fun initialize(): Boolean {
+        // Если Car API недоступен (например, на эмуляторе), не пытаемся инициализировать
+        if (carApiUnavailable) {
+            return false
+        }
+
         if (isInitialized && carInstance != null && managerInstance != null) {
             return true
         }
@@ -109,6 +122,17 @@ class CarPropertyManagerSingleton(private val context: Context) {
             Log.i(TAG, "CarPropertyManager singleton initialized successfully")
             return true
 
+        } catch (e: ClassNotFoundException) {
+            // Car API недоступен (эмулятор или устройство без Car API)
+            carApiUnavailable = true
+            if (!unavailabilityLogged) {
+                Log.w(TAG, "Car API не доступен (эмулятор или устройство без Car API). Приложение работает в ограниченном режиме.")
+                unavailabilityLogged = true
+            }
+            carInstance = null
+            managerInstance = null
+            isInitialized = false
+            return false
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize CarPropertyManager", e)
             carInstance = null
@@ -221,12 +245,28 @@ class CarPropertyManagerSingleton(private val context: Context) {
      * @return true если готов к работе
      */
     private fun ensureInitialized(): Boolean {
+        // Если Car API недоступен, сразу возвращаем false без логов
+        if (carApiUnavailable) {
+            return false
+        }
+
         if (isInitialized && managerInstance != null) {
             return true
         }
 
+        // Логируем попытку инициализации только если Car API потенциально доступен
         Log.w(TAG, "CarPropertyManager not initialized, attempting initialization...")
         return initialize()
+    }
+
+    /**
+     * Проверяет доступность Car API.
+     * Полезно для UI чтобы показать статус или переключиться в demo mode.
+     *
+     * @return true если Car API доступен и инициализирован
+     */
+    fun isCarApiAvailable(): Boolean {
+        return !carApiUnavailable && isInitialized
     }
 
     /**
@@ -248,20 +288,6 @@ class CarPropertyManagerSingleton(private val context: Context) {
     fun getCarInstance(): Any? {
         ensureInitialized()
         return carInstance
-    }
-
-    /**
-     * Проверяет доступность Car API на устройстве.
-     *
-     * @return true если android.car.Car доступен
-     */
-    fun isCarApiAvailable(): Boolean {
-        return try {
-            Class.forName(CLASS_CAR)
-            true
-        } catch (e: ClassNotFoundException) {
-            false
-        }
     }
 
     /**
@@ -298,4 +324,6 @@ class CarPropertyManagerSingleton(private val context: Context) {
      * @return true если singleton готов к работе
      */
     fun isReady(): Boolean = isInitialized && managerInstance != null
+
+
 }

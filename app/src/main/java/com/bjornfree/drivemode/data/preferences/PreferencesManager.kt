@@ -28,12 +28,17 @@ class PreferencesManager(context: Context) {
         private const val KEY_TEMP_THRESHOLD = "temp_threshold"
         private const val KEY_HEATING_LEVEL = "heating_level"
         private const val KEY_CHECK_TEMP_ONCE_ON_STARTUP = "check_temp_once_on_startup"
+        private const val KEY_AUTO_OFF_TIMER_MINUTES = "auto_off_timer_minutes"
+        private const val KEY_TEMPERATURE_SOURCE = "temperature_source"
+        private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_LAUNCH_COUNT = "launch_count"
         private const val KEY_LAST_IGNITION_STATE = "last_ignition_state"
         private const val KEY_LAST_IGNITION_TIMESTAMP = "last_ignition_timestamp"
         private const val KEY_LAST_IGNITION_OFF_TIMESTAMP = "last_ignition_off_timestamp"
         private const val KEY_BORDER_ENABLED = "border_enabled"
         private const val KEY_PANEL_ENABLED = "panel_enabled"
+        private const val KEY_METRICS_BAR_ENABLED = "metrics_bar_enabled"
+        private const val KEY_METRICS_BAR_POSITION = "metrics_bar_position"
         private const val KEY_DEMO_MODE = "demo_mode"
     }
 
@@ -95,6 +100,28 @@ class PreferencesManager(context: Context) {
         get() = prefs.getBoolean(KEY_CHECK_TEMP_ONCE_ON_STARTUP, false)
         set(value) {
             prefs.edit().putBoolean(KEY_CHECK_TEMP_ONCE_ON_STARTUP, value).apply()
+        }
+
+    /**
+     * Таймер автоотключения подогрева (в минутах).
+     * 0 = всегда работает (по умолчанию)
+     * 1-20 = автоматически отключится через N минут после включения
+     */
+    var autoOffTimerMinutes: Int
+        get() = prefs.getInt(KEY_AUTO_OFF_TIMER_MINUTES, 0)
+        set(value) {
+            prefs.edit().putInt(KEY_AUTO_OFF_TIMER_MINUTES, value.coerceIn(0, 20)).apply()
+        }
+
+    /**
+     * Источник температуры для условия включения подогрева.
+     * "cabin" = температура в салоне (по умолчанию)
+     * "ambient" = наружная температура
+     */
+    var temperatureSource: String
+        get() = prefs.getString(KEY_TEMPERATURE_SOURCE, "cabin") ?: "cabin"
+        set(value) {
+            prefs.edit().putString(KEY_TEMPERATURE_SOURCE, value).apply()
         }
 
     // ========================================
@@ -177,12 +204,45 @@ class PreferencesManager(context: Context) {
         }
 
     /**
+     * Включена ли нижняя полоска с метриками автомобиля.
+     * По умолчанию true - отображается всегда.
+     */
+    var metricsBarEnabled: Boolean
+        get() = prefs.getBoolean(KEY_METRICS_BAR_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_METRICS_BAR_ENABLED, value).apply()
+        }
+
+    /**
+     * Положение полоски метрик.
+     * "bottom" = снизу экрана (по умолчанию)
+     * "top" = сверху экрана
+     */
+    var metricsBarPosition: String
+        get() = prefs.getString(KEY_METRICS_BAR_POSITION, "bottom") ?: "bottom"
+        set(value) {
+            prefs.edit().putString(KEY_METRICS_BAR_POSITION, value).apply()
+        }
+
+    /**
      * Demo mode для тестирования без реального автомобиля.
      */
     var demoMode: Boolean
         get() = prefs.getBoolean(KEY_DEMO_MODE, false)
         set(value) {
             prefs.edit().putBoolean(KEY_DEMO_MODE, value).apply()
+        }
+
+    /**
+     * Режим темы приложения.
+     * "auto" = следует системной теме (по умолчанию)
+     * "light" = всегда светлая тема
+     * "dark" = всегда темная тема
+     */
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME_MODE, "auto") ?: "auto"
+        set(value) {
+            prefs.edit().putString(KEY_THEME_MODE, value).apply()
         }
 
     // ========================================

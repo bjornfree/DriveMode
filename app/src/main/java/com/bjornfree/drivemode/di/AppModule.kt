@@ -111,7 +111,8 @@ val appModule = module {
      */
     viewModel {
         AutoHeatingViewModel(
-            heatingRepo = get()
+            heatingRepo = get(),
+            metricsRepo = get()
         )
     }
 

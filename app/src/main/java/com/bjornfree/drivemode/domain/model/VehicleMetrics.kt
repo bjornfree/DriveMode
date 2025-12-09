@@ -11,6 +11,7 @@ data class VehicleMetrics(
     val speed: Float = 0f,                      // км/ч
     val rpm: Int = 0,                           // обороты/мин
     val gear: String = "P",                     // текущая передача
+    val gearValue: Int = 0,                     // текущая передача
 
     // Температуры
     val cabinTemperature: Float? = null,        // °C в салоне
@@ -35,6 +36,9 @@ data class VehicleMetrics(
     val batteryLevel: Int? = null,              // % уровень 12В батареи
     val pm25Status: Int? = null,                // качество воздуха
     val nightMode: Boolean = false,             // ночной режим
+
+    val serviceDaysRemaining: Int? = null,
+    val serviceDistanceRemainingKm: Int? = null,
 
     // Timestamp
     val timestamp: Long = System.currentTimeMillis()  // когда обновлены данные

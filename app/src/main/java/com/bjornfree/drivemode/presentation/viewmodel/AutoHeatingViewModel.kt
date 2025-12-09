@@ -3,12 +3,14 @@ package com.bjornfree.drivemode.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bjornfree.drivemode.data.repository.HeatingControlRepository
+import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
 import com.bjornfree.drivemode.domain.model.HeatingMode
 import com.bjornfree.drivemode.domain.model.HeatingState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -22,11 +24,14 @@ import kotlinx.coroutines.launch
  * - Изменение режима (off/adaptive/always)
  * - Настройка температурного порога
  * - Отображение причины активации/деактивации
+ * - Отображение текущих температур (в салоне и снаружи)
  *
  * @param heatingRepo repository для управления подогревом
+ * @param metricsRepo repository для получения температур
  */
 class AutoHeatingViewModel(
-    private val heatingRepo: HeatingControlRepository
+    private val heatingRepo: HeatingControlRepository,
+    private val metricsRepo: VehicleMetricsRepository
 ) : ViewModel() {
 
     /**
@@ -70,19 +75,41 @@ class AutoHeatingViewModel(
     private val _checkTempOnceOnStartup = MutableStateFlow(heatingRepo.isCheckTempOnceOnStartup())
     val checkTempOnceOnStartup: StateFlow<Boolean> = _checkTempOnceOnStartup.asStateFlow()
 
-    init {
-        // Запускаем автоподогрев при создании ViewModel
-        startAutoHeating()
-    }
+    /**
+     * Таймер автоотключения (в минутах, 0 = всегда).
+     */
+    private val _autoOffTimer = MutableStateFlow(heatingRepo.getAutoOffTimer())
+    val autoOffTimer: StateFlow<Int> = _autoOffTimer.asStateFlow()
 
     /**
-     * Запускает логику автоподогрева.
+     * Источник температуры для условия ("cabin" или "ambient").
      */
-    private fun startAutoHeating() {
-        viewModelScope.launch {
-            heatingRepo.startAutoHeating()
-        }
-    }
+    private val _temperatureSource = MutableStateFlow(heatingRepo.getTemperatureSource())
+    val temperatureSource: StateFlow<String> = _temperatureSource.asStateFlow()
+
+    /**
+     * Текущая температура в салоне (°C).
+     * Читается в реальном времени из VehicleMetricsRepository.
+     */
+    val cabinTemperature: StateFlow<Float?> = metricsRepo.vehicleMetrics
+        .map { it.cabinTemperature }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
+    /**
+     * Текущая температура снаружи (°C).
+     * Читается в реальном времени из VehicleMetricsRepository.
+     */
+    val ambientTemperature: StateFlow<Float?> = metricsRepo.vehicleMetrics
+        .map { it.ambientTemperature }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
 
     /**
      * Изменяет режим автоподогрева.
@@ -145,6 +172,30 @@ class AutoHeatingViewModel(
     }
 
     /**
+     * Устанавливает таймер автоотключения подогрева.
+     *
+     * @param minutes время в минутах (0 = всегда, 1-20 = автоотключение)
+     */
+    fun setAutoOffTimer(minutes: Int) {
+        viewModelScope.launch {
+            heatingRepo.setAutoOffTimer(minutes)
+            _autoOffTimer.value = minutes
+        }
+    }
+
+    /**
+     * Устанавливает источник температуры для условия включения подогрева.
+     *
+     * @param source "cabin" (в салоне) или "ambient" (наружная)
+     */
+    fun setTemperatureSource(source: String) {
+        viewModelScope.launch {
+            heatingRepo.setTemperatureSource(source)
+            _temperatureSource.value = source
+        }
+    }
+
+    /**
      * Получает доступные режимы подогрева для UI.
      */
     fun getAvailableModes(): List<HeatingMode> {
@@ -154,13 +205,5 @@ class AutoHeatingViewModel(
             HeatingMode.PASSENGER,
             HeatingMode.BOTH
         )
-    }
-
-    /**
-     * Вызывается когда ViewModel больше не нужна.
-     */
-    override fun onCleared() {
-        super.onCleared()
-        heatingRepo.stopAutoHeating()
     }
 }

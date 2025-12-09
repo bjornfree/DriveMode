@@ -17,9 +17,11 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.bjornfree.drivemode.data.repository.DriveModeRepository
 import com.bjornfree.drivemode.data.repository.IgnitionStateRepository
-import com.bjornfree.drivemode.domain.model.IgnitionState
 import com.bjornfree.drivemode.ui.theme.BorderOverlayController
 import com.bjornfree.drivemode.ui.theme.ModePanelOverlayController
+import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
+import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayController
+import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.buffer
 import org.koin.android.ext.android.inject
@@ -100,10 +102,26 @@ class DriveModeServiceRefactored : Service() {
                 Log.i(TAG, "Принудительный перезапуск...")
                 context.stopService(Intent(context, DriveModeServiceRefactored::class.java))
                 Thread.sleep(500)
-                context.startForegroundService(Intent(context, DriveModeServiceRefactored::class.java))
+                context.startForegroundService(
+                    Intent(
+                        context,
+                        DriveModeServiceRefactored::class.java
+                    )
+                )
                 Log.i(TAG, "Перезапущен успешно")
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка перезапуска", e)
+            }
+        }
+
+        /**
+         * Логирует сообщение в консоль приложения.
+         * Используется другими сервисами и компонентами.
+         */
+        @JvmStatic
+        fun logConsole(msg: String) {
+            instance?.logConsoleInternal(msg) ?: run {
+                Log.d(TAG, "logConsole (before service start): $msg")
             }
         }
     }
@@ -111,11 +129,18 @@ class DriveModeServiceRefactored : Service() {
     // Inject repositories через Koin
     private val driveModeRepo: DriveModeRepository by inject()
     private val ignitionRepo: IgnitionStateRepository by inject()
+    private val vehicleMetricsRepo: VehicleMetricsRepository by inject()
+    private val prefsManager: com.bjornfree.drivemode.data.preferences.PreferencesManager by inject()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val watcher = LogcatWatcher()
     private lateinit var borderOverlay: BorderOverlayController
     private lateinit var modePanelOverlayController: ModePanelOverlayController
+    private lateinit var drivingStatusOverlay: DrivingStatusOverlayController
+
+    private var statusOverlayJob: Job? = null
+    private var themeMonitorJob: Job? = null
+    private var overlaySettingsMonitorJob: Job? = null
 
     // Watchdog/троттлинг для logcat
     private var watchJob: Job? = null
@@ -145,8 +170,8 @@ class DriveModeServiceRefactored : Service() {
         super.onCreate()
         isRunning = true
         instance = this
-        logConsole("Режимы: сервис запущен")
-        logConsole("Режимы: источник данных - logcat (принудительно)")
+        log("Режимы: сервис запущен")
+        log("Режимы: источник данных - logcat (принудительно)")
 
         // Подписываемся на состояние зажигания из Repository
         subscribeToIgnitionState()
@@ -166,10 +191,179 @@ class DriveModeServiceRefactored : Service() {
         // Инициализируем overlays
         borderOverlay = BorderOverlayController(applicationContext)
         modePanelOverlayController = ModePanelOverlayController(applicationContext)
-        logConsole("UI: граница и плавающая панель инициализированы")
+        drivingStatusOverlay = DrivingStatusOverlayController(applicationContext)
+        log("UI: граница, панель и нижняя полоса статуса инициализированы")
+
+        // Синхронизируем логическое состояние полоски с настройками
+        drivingStatusOverlay.setEnabled(prefsManager.metricsBarEnabled)
+
+        // Проверяем настройку отображения полоски метрик
+        if (prefsManager.metricsBarEnabled) {
+            if (Settings.canDrawOverlays(applicationContext)) {
+                try {
+                    drivingStatusOverlay.ensureVisible()
+                    log("Полоска метрик: включена")
+                } catch (e: Exception) {
+                    log("Ошибка создания overlay при старте: ${e.message}")
+                    Log.e(TAG, "Ошибка создания overlay при старте", e)
+                }
+            } else {
+                log("Полоска метрик включена в настройках, но нет разрешения на overlay")
+            }
+        } else {
+            // При старте, если отключено — гарантируем, что логическое состояние тоже выключено
+            drivingStatusOverlay.setEnabled(false)
+            log("Полоска метрик: отключена")
+        }
+
+        // Запускаем мониторинг метрик автомобиля
+        vehicleMetricsRepo.startMonitoring()
+        log("Метрики: мониторинг запущен")
+
+        // Подписываемся на изменения темы
+        themeMonitorJob = scope.launch {
+            while (isActive) {
+                val isDark = when (prefsManager.themeMode) {
+                    "dark" -> true
+                    "light" -> false
+                    else -> {
+                        // auto - проверяем системную тему
+                        val uiMode = applicationContext.resources.configuration.uiMode
+                        (uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                                android.content.res.Configuration.UI_MODE_NIGHT_YES
+                    }
+                }
+                drivingStatusOverlay.setDarkTheme(isDark)
+                delay(1000) // Проверяем тему каждую секунду
+            }
+        }
+
+        // Мониторинг настроек overlay для применения изменений "на горячую"
+        overlaySettingsMonitorJob = scope.launch {
+            var lastMetricsBarEnabled = prefsManager.metricsBarEnabled
+            var lastMetricsBarPosition = prefsManager.metricsBarPosition
+            var lastHasOverlayPermission = Settings.canDrawOverlays(applicationContext)
+
+            // Сразу синхронизируем логическое состояние с настройками
+            drivingStatusOverlay.setEnabled(lastMetricsBarEnabled)
+
+            while (isActive) {
+                delay(500) // Проверяем настройки каждые 500мс
+
+                // Проверяем наличие разрешения на overlay
+                val hasOverlayPermission = Settings.canDrawOverlays(applicationContext)
+
+                val currentMetricsBarEnabled = prefsManager.metricsBarEnabled
+                val currentMetricsBarPosition = prefsManager.metricsBarPosition
+
+                // Проверяем изменение включения/выключения полоски
+                if (currentMetricsBarEnabled != lastMetricsBarEnabled) {
+                    // Сначала обновляем логическое состояние контроллера
+                    drivingStatusOverlay.setEnabled(currentMetricsBarEnabled)
+
+                    if (currentMetricsBarEnabled) {
+                        if (hasOverlayPermission) {
+                            try {
+                                drivingStatusOverlay.ensureVisible()
+                                log("Metrics bar: включена")
+                            } catch (e: Exception) {
+                                log("Ошибка отображения metrics bar: ${e.message}")
+                            }
+                        } else {
+                            log("Metrics bar: включена в настройках, но нет разрешения на overlay")
+                        }
+                    } else {
+                        // Когда отключаем — destroy() уже вызван внутри setEnabled(false),
+                        // поэтому здесь просто логируем изменение.
+                        log("Metrics bar: выключена")
+                    }
+
+                    lastMetricsBarEnabled = currentMetricsBarEnabled
+                }
+
+                // Проверяем изменение разрешения на overlay
+                if (hasOverlayPermission != lastHasOverlayPermission) {
+                    if (hasOverlayPermission) {
+                        // Разрешение только что выдано
+                        if (currentMetricsBarEnabled) {
+                            try {
+                                drivingStatusOverlay.ensureVisible()
+                                drivingStatusOverlay.setPosition(currentMetricsBarPosition)
+                                log("Metrics bar: показана после выдачи разрешения")
+                            } catch (e: Exception) {
+                                log("Ошибка отображения metrics bar после выдачи разрешения: ${e.message}")
+                            }
+                        }
+                    } else {
+                        // Разрешение отозвано — скрываем overlay
+                        try {
+                            drivingStatusOverlay.destroy()
+                            log("Metrics bar: скрыта из-за отсутствия разрешения")
+                        } catch (e: Exception) {
+                            log("Ошибка при скрытии metrics bar после отзыва разрешения: ${e.message}")
+                        }
+                    }
+                    lastHasOverlayPermission = hasOverlayPermission
+                }
+
+                // Проверяем изменение позиции полоски
+                if (currentMetricsBarPosition != lastMetricsBarPosition) {
+                    // Меняем позицию только если полоска включена и есть разрешение
+                    if (currentMetricsBarEnabled && hasOverlayPermission) {
+                        try {
+                            // Сначала убираем старый overlay, чтобы он не "залипал"
+                            drivingStatusOverlay.destroy()
+
+                            // Обновляем позицию внутри контроллера
+                            drivingStatusOverlay.setPosition(currentMetricsBarPosition)
+
+                            // И снова показываем полоску в новой позиции
+                            drivingStatusOverlay.ensureVisible()
+                            log("Metrics bar position: $currentMetricsBarPosition")
+                        } catch (e: Exception) {
+                            log("Ошибка изменения позиции: ${e.message}")
+                        }
+                    }
+                    lastMetricsBarPosition = currentMetricsBarPosition
+                }
+            }
+        }
+
+        // Подписка на метрики автомобиля для обновления нижней полосы статуса
+        statusOverlayJob = scope.launch {
+            vehicleMetricsRepo.vehicleMetrics.collect { m ->
+                val tire = m.tirePressure
+
+                // Читаем последний известный режим для компактного текста
+                val modeTitle = lastShownMode?.let { key ->
+                    when (DriveMode.fromKeyOrNull(key)) {
+                        DriveMode.SPORT -> "Sport"
+                        DriveMode.COMFORT -> "Comfort"
+                        DriveMode.ECO -> "Eco"
+                        DriveMode.ADAPTIVE -> "Adaptive"
+                        null -> null
+                    }
+                }
+
+                val state = DrivingStatusOverlayState(
+                    modeTitle = modeTitle,
+                    gear = m.gear,
+                    speedKmh = m.speed?.toInt(),
+                    rangeKm = (m.fuel?.rangeKm ?: m.rangeRemaining)?.toInt(),
+                    cabinTempC = m.cabinTemperature,
+                    ambientTempC = m.ambientTemperature,
+                    tirePressureFrontLeft = tire?.frontLeft?.pressure,
+                    tirePressureFrontRight = tire?.frontRight?.pressure,
+                    tirePressureRearLeft = tire?.rearLeft?.pressure,
+                    tirePressureRearRight = tire?.rearRight?.pressure
+                )
+
+                drivingStatusOverlay.updateStatus(state)
+            }
+        }
 
         // Запускаем logcat мониторинг сразу (работаем 24/7)
-        logConsole("Logcat: запускаем мониторинг (работаем 24/7)")
+        log("Logcat: запускаем мониторинг (работаем 24/7)")
         startWatchLoop()
 
         // Watchdog: проверяем logcat каждые 5 секунд
@@ -185,42 +379,43 @@ class DriveModeServiceRefactored : Service() {
                 if (currentTime - hourStartTime > 3600_000) {
                     hourStartTime = currentTime
                     restartsThisHour = 0
-                    logConsole("Watchdog: почасовой сброс - счетчик перезапусков обнулен")
+                    log("Watchdog: почасовой сброс - счетчик перезапусков обнулен")
                 }
 
                 val sinceLastLine = SystemClock.elapsedRealtime() - lastLineAtMs
                 if (isWatching && sinceLastLine > MAX_STALL_MS) {
-                    logConsole("Logcat: зависание обнаружено (\${sinceLastLine}мс без данных)")
+                    log("Logcat: зависание обнаружено (\${sinceLastLine}мс без данных)")
 
                     // Проверяем не слишком ли часто перезапускаемся
                     if (restartsThisHour >= MAX_LOGCAT_RESTARTS_PER_HOUR) {
-                        logConsole("Logcat: ОШИБКА - слишком много перезапусков ($restartsThisHour/час), отключаем мониторинг")
+                        log("Logcat: ОШИБКА - слишком много перезапусков ($restartsThisHour/час), отключаем мониторинг")
                         showErrorNotification("Logcat мониторинг отключен из-за частых сбоев")
                         try {
                             watchJob?.cancel()
                             watcher.stop()
-                        } catch (_: Exception) {}
+                        } catch (_: Exception) {
+                        }
                         isWatching = false
                         continue
                     }
 
                     restartsThisHour++
                     logcatRestartCount++
-                    logConsole("Logcat: перезапуск (#$logcatRestartCount, $restartsThisHour/час)")
+                    log("Logcat: перезапуск (#$logcatRestartCount, $restartsThisHour/час)")
 
                     try {
                         watchJob?.cancel()
                         watcher.stop()
                         delay(1000)
                     } catch (e: Exception) {
-                        logConsole("Logcat: ошибка при подготовке к перезапуску: \${e.javaClass.simpleName}: \${e.message}")
+                        log("Logcat: ошибка при подготовке к перезапуску: \${e.javaClass.simpleName}: \${e.message}")
                     }
 
                     // Перезапускаем
                     try {
                         startWatchLoop()
                     } catch (e: Exception) {
-                        logConsole("Logcat: ОШИБКА не удалось перезапустить: \${e.javaClass.simpleName}: \${e.message}")
+                        log("Logcat: ОШИБКА не удалось перезапустить: \${e.javaClass.simpleName}: \${e.message}")
                         Log.e(TAG, "Failed to restart watchLoop", e)
                     }
                 }
@@ -239,23 +434,34 @@ class DriveModeServiceRefactored : Service() {
         ignitionStateJob = scope.launch {
             ignitionRepo.ignitionState.collect { state ->
                 if (state.isOn) {
-                    logConsole("ignition: состояние = ${state.stateName}")
+                    log("ignition: состояние = ${state.stateName}")
                     // Убедимся что logcat мониторинг запущен
                     if (!isWatching) {
-                        logConsole("ignition: мониторинг не активен, запускаем")
+                        log("ignition: мониторинг не активен, запускаем")
                         try {
                             startWatchLoop()
                         } catch (e: Exception) {
-                            logConsole("ignition: ОШИБКА запуска мониторинга: ${e.javaClass.simpleName}")
+                            log("ignition: ОШИБКА запуска мониторинга: ${e.javaClass.simpleName}")
                             Log.e(TAG, "Failed to start watchLoop", e)
                         }
                     }
+
+                    // При включении зажигания, если сервис уже знает последний режим,
+                    // сразу показываем его, не дожидаясь нового события из logcat.
+                    val last = lastShownMode
+                    if (last != null) {
+                        Log.i(TAG, "ignition: re-show last known drive mode on ignition ON: $last")
+                        val driveMode = DriveMode.fromKeyOrNull(last)
+                        if (driveMode != null) {
+                            onDriveModeDetected(driveMode)
+                        }
+                    }
                 } else if (state.isOff) {
-                    logConsole("ignition: состояние = ${state.stateName}")
+                    log("ignition: состояние = ${state.stateName}")
                     // Работаем 24/7 - не останавливаем мониторинг!
                 } else {
                     // Intermediate or unknown state
-                    logConsole("ignition: состояние = ${state.stateName}")
+                    log("ignition: состояние = ${state.stateName}")
                 }
             }
         }
@@ -274,7 +480,7 @@ class DriveModeServiceRefactored : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        logConsole("DriveModeService: onTaskRemoved - перезапускаем сервис")
+        log("DriveModeService: onTaskRemoved - перезапускаем сервис")
 
         // Перезапускаем сервис при удалении задачи
         val restartIntent = Intent(applicationContext, DriveModeServiceRefactored::class.java)
@@ -282,19 +488,41 @@ class DriveModeServiceRefactored : Service() {
     }
 
     override fun onDestroy() {
-        try { watcher.stop() } catch (_: Exception) {}
+        try {
+            watcher.stop()
+        } catch (_: Exception) {
+        }
         watchJob?.cancel()
         ignitionStateJob?.cancel()
+        statusOverlayJob?.cancel()
+        themeMonitorJob?.cancel()
+        overlaySettingsMonitorJob?.cancel()
+
+        // Останавливаем мониторинг метрик
+        vehicleMetricsRepo.stopMonitoring()
 
         isRunning = false
         instance = null
         isWatching = false
-        logConsole("Режимы: сервис остановлен")
+        log("Режимы: сервис остановлен")
 
         super.onDestroy()
         scope.cancel()
-        borderOverlay.destroy()
-        modePanelOverlayController.destroy()
+
+        try {
+            borderOverlay.destroy()
+        } catch (_: Exception) {
+        }
+
+        try {
+            modePanelOverlayController.destroy()
+        } catch (_: Exception) {
+        }
+
+        try {
+            drivingStatusOverlay.destroy()
+        } catch (_: Exception) {
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -311,7 +539,7 @@ class DriveModeServiceRefactored : Service() {
         watchJob = scope.launch(Dispatchers.IO) {
             try {
                 isWatching = true
-                logConsole("Logcat: мониторинг запущен")
+                log("Logcat: мониторинг запущен")
 
                 var logcatCheckDone = false
 
@@ -324,7 +552,7 @@ class DriveModeServiceRefactored : Service() {
                             if (!logcatCheckDone) {
                                 logcatCheckDone = true
                                 if (!watcher.hasRootAccess) {
-                                    logConsole("WARNING: running without root - may not work on production devices")
+                                    log("WARNING: running without root - may not work on production devices")
                                     showErrorNotification("DriveMode работает без root-доступа")
                                 }
                                 logcatWatcherConsecutiveErrors = 0
@@ -341,10 +569,6 @@ class DriveModeServiceRefactored : Service() {
                                 return@collect
                             }
 
-                            // Даём logcat'у "прогреться" после старта
-                            if (SystemClock.elapsedRealtime() - watchStartElapsedMs < 1500) {
-                                return@collect
-                            }
 
                             // Пробуем распознать режим езды
                             val mode = LogcatWatcher.parseModeOrNull(line)
@@ -355,7 +579,7 @@ class DriveModeServiceRefactored : Service() {
                                     return@collect
                                 }
 
-                                logConsole("Logcat: \${line.take(120)} → режим: $mode")
+                                log("Logcat: \${line.take(120)} → режим: $mode")
                                 Log.d(TAG, "Logcat hit: $mode from $line")
 
                                 withContext(Dispatchers.Main) {
@@ -364,31 +588,32 @@ class DriveModeServiceRefactored : Service() {
                             }
                         } catch (e: Exception) {
                             logcatWatcherConsecutiveErrors++
-                            logConsole("Logcat: ошибка обработки строки (#$logcatWatcherConsecutiveErrors): \${e.javaClass.simpleName}")
+                            log("Logcat: ошибка обработки строки (#$logcatWatcherConsecutiveErrors): \${e.javaClass.simpleName}")
                             Log.e(TAG, "Error processing logcat line", e)
 
                             if (logcatWatcherConsecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                                logConsole("Logcat: ОШИБКА - слишком много последовательных ошибок, останавливаем")
+                                log("Logcat: ОШИБКА - слишком много последовательных ошибок, останавливаем")
                                 throw e
                             }
                         }
                     }
             } catch (e: Exception) {
                 logcatWatcherConsecutiveErrors++
-                logConsole("Logcat: КРИТИЧЕСКАЯ ошибка (#$logcatWatcherConsecutiveErrors): \${e.javaClass.simpleName}")
+                log("Logcat: КРИТИЧЕСКАЯ ошибка (#$logcatWatcherConsecutiveErrors): \${e.javaClass.simpleName}")
                 Log.e(TAG, "Logcat watcher failed", e)
 
                 if (logcatWatcherConsecutiveErrors >= 3) {
                     showErrorNotification("Критическая ошибка мониторинга logcat")
                 } else {
-                    logConsole("Logcat: автоматический повтор через watchdog")
+                    log("Logcat: автоматический повтор через watchdog")
                 }
             } finally {
                 isWatching = false
-                logConsole("Logcat: мониторинг остановлен")
+                log("Logcat: мониторинг остановлен")
                 try {
                     watcher.stop()
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -414,20 +639,25 @@ class DriveModeServiceRefactored : Service() {
         }
 
         try {
-            borderOverlay.showMode(key)
-            modePanelOverlayController.showMode(key)
+            if (Settings.canDrawOverlays(applicationContext)) {
+                borderOverlay.showMode(key)
+                modePanelOverlayController.showMode(key)
+            } else {
+                log("overlay skipped: нет разрешения на overlay")
+            }
         } catch (e: Exception) {
-            logConsole("overlay error: \${e.javaClass.simpleName}: \${e.message}")
+            log("overlay error: ${e.javaClass.simpleName}: ${e.message}")
             Log.e(TAG, "Overlay error", e)
             try {
                 borderOverlay.hide()
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
 
         try {
             updateNotification(key)
         } catch (e: Exception) {
-            logConsole("notification error: \${e.javaClass.simpleName}: \${e.message}")
+            log("notification error: \${e.javaClass.simpleName}: \${e.message}")
             Log.e(TAG, "Notification error", e)
         }
     }
@@ -435,7 +665,7 @@ class DriveModeServiceRefactored : Service() {
     private fun onModeDetected(mode: String) {
         val driveMode = DriveMode.fromKeyOrNull(mode)
         if (driveMode == null) {
-            logConsole("onModeDetected: unknown mode='$mode', ignore")
+            log("onModeDetected: unknown mode='$mode', ignore")
             return
         }
         onDriveModeDetected(driveMode)
@@ -444,10 +674,17 @@ class DriveModeServiceRefactored : Service() {
     /**
      * Логирование в консоль через DriveModeRepository.
      */
-    private fun logConsole(msg: String) {
+    private fun logConsoleInternal(msg: String) {
         scope.launch {
             driveModeRepo.logConsole(msg)
         }
+    }
+
+    /**
+     * Локальная функция для логирования (вызывает logConsoleInternal).
+     */
+    private fun log(msg: String) {
+        logConsoleInternal(msg)
     }
 
     /**
@@ -469,7 +706,7 @@ class DriveModeServiceRefactored : Service() {
     private fun resetLogState(component: String) {
         synchronized(logLock) {
             if (lastLoggedMessage != null) {
-                logConsole("$component: ✓ Операция возобновлена успешно")
+                log("$component: ✓ Операция возобновлена успешно")
                 lastLoggedMessage = null
             }
         }
@@ -479,7 +716,9 @@ class DriveModeServiceRefactored : Service() {
         val chId = "drive_mode_service"
         if (Build.VERSION.SDK_INT >= 26) {
             val ch = NotificationChannel(chId, "DriveMode", NotificationManager.IMPORTANCE_MIN)
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+                ch
+            )
         }
         return NotificationCompat.Builder(this, chId)
             .setContentTitle("DriveMode: сервис активен")
@@ -509,7 +748,7 @@ class DriveModeServiceRefactored : Service() {
                 startForeground(1, n)
             }
         } catch (e: Exception) {
-            logConsole("startForeground error: \${e.javaClass.simpleName}")
+            log("startForeground error: \${e.javaClass.simpleName}")
             Log.e(TAG, "startForeground error", e)
         }
     }
@@ -534,7 +773,7 @@ class DriveModeServiceRefactored : Service() {
                 Log.w(TAG, "Requested ignore battery optimizations")
             }
         } catch (e: Exception) {
-            logConsole("keepAliveWhitelist error: \${e.javaClass.simpleName}")
+            log("keepAliveWhitelist error: \${e.javaClass.simpleName}")
         }
     }
 

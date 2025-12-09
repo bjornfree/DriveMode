@@ -125,6 +125,17 @@ class AutoSeatHeatService : Service() {
         // Инициализируем Car API для управления HVAC
         initializeCarApi()
 
+        // Запускаем логику автоподогрева в фоне (независимо от UI)
+        scope.launch {
+            try {
+                heatingRepo.startAutoHeating()
+                log("startAutoHeating: фоновая логика автоподогрева запущена")
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка запуска автоподогрева", e)
+                logToConsole("AutoSeatHeatService: ⚠ Ошибка запуска автоподогрева: ${e.message}")
+            }
+        }
+
         // Запускаем слушатель состояния подогрева
         startHeatingListener()
 
@@ -159,17 +170,13 @@ class AutoSeatHeatService : Service() {
         heatingJob = scope.launch {
             heatingRepo.heatingState.collect { state ->
                 if (state.isActive) {
-                    log("Подогрев должен быть активен: ${state.reason}")
-                    logToConsole("AutoSeatHeatService: ✓ Активация подогрева (${state.reason})")
                     activateSeatHeating(state)
                 } else {
-                    log("Подогрев должен быть неактивен: ${state.reason}")
                     deactivateSeatHeating(state)
                 }
             }
         }
 
-        log("Слушатель состояния подогрева запущен")
     }
 
     /**
@@ -220,28 +227,27 @@ class AutoSeatHeatService : Service() {
                 Int::class.javaPrimitiveType
             )
 
-            // Устанавливаем подогрев для нужных сидений
+            // Полный список сидений, которыми управляем (водитель и пассажир)
+            val allSeatAreas = listOf(1, 4)
+
+            // Устанавливаем уровни подогрева для всех сидений:
+            // для выбранных в текущем режиме – hvacLevel,
+            // для остальных – 0 (выключаем, если ранее были включены).
             var successCount = 0
-            for (area in areas) {
+            for (area in allSeatAreas) {
+                val levelForArea = if (areas.contains(area)) hvacLevel else 0
                 try {
                     setIntPropertyMethod.invoke(
                         carPropertyManagerObj,
                         VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
                         area,
-                        hvacLevel
+                        levelForArea
                     )
-                    log("Подогрев установлен: area=$area, level=$hvacLevel")
                     successCount++
                 } catch (e: Exception) {
                     log("⚠ Area $area не поддерживается: ${e.message}")
                     // Не падаем, продолжаем для других area
                 }
-            }
-
-            if (successCount > 0) {
-                logToConsole("AutoSeatHeatService: 🔥 Подогрев ${state.mode.displayName}, уровень $hvacLevel")
-            } else {
-                logToConsole("AutoSeatHeatService: ⚠ Не удалось активировать подогрев (area не поддерживаются)")
             }
 
         } catch (e: Exception) {
@@ -283,14 +289,12 @@ class AutoSeatHeatService : Service() {
                         area,
                         0  // 0 = off
                     )
-                    log("Подогрев выключен: area=$area")
                 } catch (e: Exception) {
-                    log("⚠ Area $area не поддерживается при выключении: ${e.message}")
+
                     // Не падаем, продолжаем для других area
                 }
             }
 
-            log("Подогрев сидений деактивирован")
 
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка деактивации подогрева", e)
@@ -310,6 +314,13 @@ class AutoSeatHeatService : Service() {
 
         isRunning = false
         serviceInstance = null
+
+        // Останавливаем логику автоподогрева в репозитории
+        try {
+            heatingRepo.stopAutoHeating()
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка остановки автоподогрева", e)
+        }
 
         // Останавливаем слушатель
         heatingJob?.cancel()

@@ -10,14 +10,16 @@ data class FuelData(
     /**
      * Запас хода на текущем топливе (км).
      * Рассчитывается ECU на основе уровня топлива и среднего расхода.
+     * Может быть null если данные недоступны.
      */
-    val rangeKm: Float,
+    val rangeKm: Float?,
 
     /**
      * Текущий объем топлива в баке (литры).
      * Рассчитывается на основе rangeKm и среднего расхода.
+     * Может быть null если данные недоступны.
      */
-    val currentFuelLiters: Float,
+    val currentFuelLiters: Float?,
 
     /**
      * Емкость топливного бака (литры).
@@ -32,9 +34,12 @@ data class FuelData(
 ) {
     /**
      * Процент заполнения бака (0-100).
+     * Возвращает 0 если данные недоступны.
      */
     val fuelPercentage: Int
-        get() = ((currentFuelLiters / capacityLiters) * 100).toInt().coerceIn(0, 100)
+        get() = currentFuelLiters?.let {
+            ((it / capacityLiters) * 100).toInt().coerceIn(0, 100)
+        } ?: 0
 
     /**
      * Проверяет что топливо на критически низком уровне (<10%).

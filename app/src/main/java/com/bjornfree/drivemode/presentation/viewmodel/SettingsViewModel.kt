@@ -43,10 +43,31 @@ class SettingsViewModel(
     val panelEnabled: StateFlow<Boolean> = _panelEnabled.asStateFlow()
 
     /**
+     * Нижняя полоска метрик включена.
+     */
+    private val _metricsBarEnabled = MutableStateFlow(prefsManager.metricsBarEnabled)
+    val metricsBarEnabled: StateFlow<Boolean> = _metricsBarEnabled.asStateFlow()
+
+    /**
+     * Положение полоски метрик ("bottom" или "top").
+     */
+    private val _metricsBarPosition = MutableStateFlow(prefsManager.metricsBarPosition)
+    val metricsBarPosition: StateFlow<String> = _metricsBarPosition.asStateFlow()
+
+    /**
      * Количество запусков приложения.
      */
     private val _launchCount = MutableStateFlow(prefsManager.launchCount)
     val launchCount: StateFlow<Int> = _launchCount.asStateFlow()
+
+    /**
+     * Режим темы приложения.
+     * "auto" = следует системной теме (по умолчанию)
+     * "light" = всегда светлая тема
+     * "dark" = всегда темная тема
+     */
+    private val _themeMode = MutableStateFlow(prefsManager.themeMode)
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
     /**
      * Переключает demo mode.
@@ -106,12 +127,53 @@ class SettingsViewModel(
     }
 
     /**
+     * Переключает нижнюю полоску метрик.
+     */
+    fun toggleMetricsBar() {
+        val newValue = !_metricsBarEnabled.value
+        prefsManager.metricsBarEnabled = newValue
+        _metricsBarEnabled.value = newValue
+    }
+
+    /**
+     * Устанавливает отображение нижней полоски метрик.
+     *
+     * @param enabled true для включения полоски
+     */
+    fun setMetricsBarEnabled(enabled: Boolean) {
+        prefsManager.metricsBarEnabled = enabled
+        _metricsBarEnabled.value = enabled
+    }
+
+    /**
+     * Устанавливает положение полоски метрик.
+     *
+     * @param position "bottom" или "top"
+     */
+    fun setMetricsBarPosition(position: String) {
+        prefsManager.metricsBarPosition = position
+        _metricsBarPosition.value = position
+    }
+
+    /**
+     * Устанавливает режим темы приложения.
+     *
+     * @param mode "auto", "light", или "dark"
+     */
+    fun setThemeMode(mode: String) {
+        prefsManager.themeMode = mode
+        _themeMode.value = mode
+    }
+
+    /**
      * Сбрасывает все настройки к значениям по умолчанию.
      */
     fun resetToDefaults() {
         setDemoMode(false)
         setBorderEnabled(true)
         setPanelEnabled(true)
+        setMetricsBarEnabled(true)
+        setThemeMode("auto")
     }
 
     /**
@@ -122,6 +184,7 @@ class SettingsViewModel(
         _demoMode.value = false
         _borderEnabled.value = true
         _panelEnabled.value = true
+        _metricsBarEnabled.value = true
         _launchCount.value = 0
     }
 

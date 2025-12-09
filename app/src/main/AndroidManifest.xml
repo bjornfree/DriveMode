@@ -95,9 +95,9 @@
             </intent-filter>
         </activity>
 
-        <!-- ForegroundService, который слушает машину и управляет оверлеем -->
+        <!-- ForegroundService, который слушает машину и управляет оверлеем (новая версия) -->
         <service
-            android:name=".core.DriveModeService"
+            android:name=".core.DriveModeServiceRefactored"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync" />
 

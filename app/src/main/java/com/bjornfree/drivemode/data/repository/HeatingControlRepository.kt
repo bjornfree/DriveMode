@@ -40,11 +40,25 @@ class HeatingControlRepository(
     @Volatile
     private var isRunning = false
 
-    // Отслеживаем предыдущее состояние зажигания для детекта включения
-    private var lastIgnitionOn = false
-
     // Флаг что решение о подогреве уже принято при этом включении зажигания
     private var heatingDecisionMade = false
+
+    // Отслеживаем время активации подогрева для автоотключения
+    private var heatingActivatedAt: Long = 0L
+
+    // Флаг, что подогрев был отключен именно таймером (до следующего цикла зажигания/смены настроек)
+    private var turnedOffByTimer: Boolean = false
+
+    /**
+     * Сбрасывает внутреннее решение и таймер автоподогрева.
+     * Используется при смене настроек, чтобы логика пересчиталась как при новом запуске.
+     */
+    private fun resetDecisionState(reason: String) {
+        Log.d(TAG, "Resetting heating decision state: $reason")
+        heatingDecisionMade = false
+        heatingActivatedAt = 0L
+        turnedOffByTimer = false
+    }
 
     /**
      * Запускает логику автоподогрева.
@@ -63,10 +77,6 @@ class HeatingControlRepository(
         ignitionRepo.startMonitoring()
         metricsRepo.startMonitoring()
 
-        // Загружаем текущий режим из настроек
-        val mode = HeatingMode.fromKey(prefsManager.seatAutoHeatMode)
-        val tempThreshold = prefsManager.temperatureThreshold
-
         controlJob = scope.launch {
             // Комбинируем потоки зажигания и метрик
             combine(
@@ -79,67 +89,122 @@ class HeatingControlRepository(
                 val currentMode = HeatingMode.fromKey(prefsManager.seatAutoHeatMode)
                 val isAdaptive = prefsManager.adaptiveHeating
                 val threshold = prefsManager.temperatureThreshold
-                val cabinTemp = metrics.cabinTemperature
                 val checkOnce = prefsManager.checkTempOnceOnStartup
+                val autoOffTimerMinutes = prefsManager.autoOffTimerMinutes
+                val temperatureSource = prefsManager.temperatureSource
 
-                // Детектируем включение зажигания (переход с OFF на ON)
-                val ignitionJustTurnedOn = ignition.isOn && !lastIgnitionOn
-                lastIgnitionOn = ignition.isOn
+                // Выбираем источник температуры
+                val tempToCheck = if (temperatureSource == "ambient") {
+                    metrics.ambientTemperature
+                } else {
+                    metrics.cabinTemperature
+                }
+                val cabinTemp = metrics.cabinTemperature // Сохраняем для отображения
 
-                // Сбрасываем флаг решения при выключении зажигания
+                // Логика зажигания используется только через ignition.isOn и heatingDecisionMade
+
+                // При выключении зажигания всегда сбрасываем решение и состояние таймера
                 if (!ignition.isOn) {
                     heatingDecisionMade = false
+                    heatingActivatedAt = 0L
+                    turnedOffByTimer = false
                 }
 
-                // Если режим "проверка только при запуске" и решение уже принято - не меняем состояние
-                if (checkOnce && heatingDecisionMade && ignition.isOn) {
-                    // Пропускаем обновление, оставляем текущее состояние
-                    return@collect
-                }
-
-                // Помечаем что решение принято (если зажигание включено)
-                if (ignition.isOn) {
-                    heatingDecisionMade = true
-                }
-
-                // Определяем должен ли быть активен подогрев
-                // Логика как в старой версии (AutoHeaterService.kt.backup lines 1225-1289)
-                val shouldBeActive = if (currentMode == HeatingMode.OFF) {
-                    // Режим выключен - ничего не делаем
+                // Проверяем автоотключение по таймеру
+                val isTimerExpired = if (autoOffTimerMinutes > 0 && heatingActivatedAt > 0) {
+                    val elapsedMinutes = (System.currentTimeMillis() - heatingActivatedAt) / 60_000
+                    elapsedMinutes >= autoOffTimerMinutes
+                } else {
                     false
-                } else if (!ignition.isOn) {
-                    // Зажигание выключено - подогрев не нужен
+                }
+
+                // Решение по температуре (адаптив/порог) с учётом режима "проверка только при запуске"
+                val previousActive = _heatingState.value.isActive
+                val baseTempDecision: Boolean =
+                    if (!checkOnce || !heatingDecisionMade) {
+                        val decision = if (isAdaptive) {
+                            // ПРИОРИТЕТ 1: Адаптивный режим - порог температуры игнорируется
+                            if (tempToCheck == null) {
+                                false // Температура недоступна - на всякий случай выключаем
+                            } else {
+                                tempToCheck < 10f // Адаптивный порог жестко закодирован
+                            }
+                        } else {
+                            // ПРИОРИТЕТ 2: Обычный режим - проверяем температурный порог
+                            if (tempToCheck == null) {
+                                false // Температура недоступна - НЕ включаем
+                            } else {
+                                tempToCheck < threshold // Используем настраиваемый порог
+                            }
+                        }
+                        // В режиме "проверка только при запуске" фиксируем решение
+                        if (checkOnce && ignition.isOn && tempToCheck != null && !heatingDecisionMade) {
+                            heatingDecisionMade = true
+                        }
+                        decision
+                    } else {
+                        // В режиме однократной проверки сохраняем предыдущее решение по температуре
+                        previousActive
+                    }
+
+                // Сначала считаем "сырое" решение без учёта таймера/латча
+                val rawShouldBeActive =
+                    if (currentMode == HeatingMode.OFF) {
+                        // Режим выключен - ничего не делаем
+                        false
+                    } else if (!ignition.isOn) {
+                        // Зажигание выключено - подогрев не нужен
+                        false
+                    } else {
+                        // Режим driver/passenger/both + зажигание ON
+                        baseTempDecision
+                    }
+
+                // Если таймер истёк в момент, когда подогрев был активен, фиксируем, что он отключён именно таймером
+                if (isTimerExpired && previousActive) {
+                    turnedOffByTimer = true
+                    Log.d(TAG, "Heating auto-off by timer: $autoOffTimerMinutes min elapsed")
+                }
+
+                // Финальное решение с учётом того, что таймер мог уже один раз отключить подогрев
+                val shouldBeActive = if (turnedOffByTimer) {
                     false
                 } else {
-                    // Режим driver/passenger/both + зажигание ON
-                    if (isAdaptive) {
-                        // ПРИОРИТЕТ 1: Адаптивный режим - порог температуры игнорируется!
-                        // Включаем если температура салона < 10°C
-                        if (cabinTemp == null) {
-                            false // Температура недоступна - на всякий случай включаем
-                        } else {
-                            cabinTemp < 10f // Адаптивный порог жестко закодирован
-                        }
+                    rawShouldBeActive
+                }
+
+                // Отслеживаем активацию подогрева для таймера
+                val wasActive = previousActive
+                if (shouldBeActive && !wasActive) {
+                    // Подогрев только что активировался
+                    if (autoOffTimerMinutes > 0) {
+                        // Таймер включен — запоминаем момент активации
+                        heatingActivatedAt = System.currentTimeMillis()
+                        Log.d(TAG, "Heating activated, timer started (auto-off in $autoOffTimerMinutes min)")
                     } else {
-                        // ПРИОРИТЕТ 2: Обычный режим - проверяем температурный порог
-                        if (cabinTemp == null) {
-                            true // Температура недоступна - включаем
-                        } else {
-                            cabinTemp < threshold // Используем настраиваемый порог
-                        }
+                        // Таймер отключен (0 минут) — не держим лишнее состояние
+                        heatingActivatedAt = 0L
+                        Log.d(TAG, "Heating activated, auto-off timer disabled (0 min)")
                     }
+                } else if (!shouldBeActive && wasActive) {
+                    // Подогрев деактивировался - всегда сбрасываем таймер
+                    heatingActivatedAt = 0L
+                    Log.d(TAG, "Heating deactivated, timer reset")
                 }
 
                 // Обновляем state
+                val tempSourceLabel = if (temperatureSource == "ambient") "наружная" else "салон"
                 val reason = when {
                     !ignition.isOn -> "Зажигание выключено"
                     currentMode == HeatingMode.OFF -> "Режим: выключен"
-                    isAdaptive && cabinTemp == null -> "[Адаптив] Температура недоступна → включено"
-                    isAdaptive && cabinTemp!! < 10f -> "[Адаптив] Температура ${cabinTemp.toInt()}°C < 10°C → включено"
-                    isAdaptive -> "[Адаптив] Температура ${cabinTemp?.toInt()}°C ≥ 10°C → выключено"
-                    cabinTemp == null -> "[Порог] Температура недоступна → включено"
-                    cabinTemp < threshold -> "[Порог] Температура ${cabinTemp.toInt()}°C < ${threshold}°C → включено"
-                    else -> "[Порог] Температура ${cabinTemp.toInt()}°C ≥ ${threshold}°C → выключено"
+                    turnedOffByTimer -> "[Таймер] Автоотключение через ${autoOffTimerMinutes} мин"
+                    isAdaptive && tempToCheck == null -> "[Адаптив] Температура ($tempSourceLabel) недоступна → выключено"
+                    isAdaptive && tempToCheck != null && tempToCheck < 10f -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C < 10°C → включено"
+                    isAdaptive && tempToCheck != null -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C ≥ 10°C → выключено"
+                    tempToCheck == null -> "[Порог] Температура ($tempSourceLabel) недоступна → выключено"
+                    tempToCheck != null && tempToCheck < threshold -> "[Порог] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C < ${threshold}°C → включено"
+                    tempToCheck != null -> "[Порог] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C ≥ ${threshold}°C → выключено"
+                    else -> "Неизвестное состояние"
                 }
 
                 _heatingState.value = HeatingState(
@@ -148,7 +213,7 @@ class HeatingControlRepository(
                     adaptiveHeating = isAdaptive,
                     heatingLevel = prefsManager.heatingLevel,
                     reason = reason,
-                    currentTemp = cabinTemp,
+                    currentTemp = tempToCheck ?: cabinTemp,
                     temperatureThreshold = threshold
                 )
 
@@ -172,8 +237,11 @@ class HeatingControlRepository(
         controlJob?.cancel()
         controlJob = null
 
-        // Деактивируем подогрев
-        _heatingState.value = HeatingState(isActive = false, reason = "Stopped")
+        // Деактивируем подогрев, сохраняя остальные поля состояния
+        _heatingState.value = _heatingState.value.copy(
+            isActive = false,
+            reason = "Stopped"
+        )
     }
 
     /**
@@ -183,6 +251,8 @@ class HeatingControlRepository(
     fun setMode(mode: HeatingMode) {
         Log.i(TAG, "Setting heating mode to: ${mode.key}")
         prefsManager.seatAutoHeatMode = mode.key
+        // Считаем это как смену сценария – пересчитываем условия заново
+        resetDecisionState("mode changed to ${mode.key}")
     }
 
     /**
@@ -192,6 +262,8 @@ class HeatingControlRepository(
     fun setTemperatureThreshold(threshold: Int) {
         Log.i(TAG, "Setting temperature threshold to: $threshold°C")
         prefsManager.temperatureThreshold = threshold
+        // Новый порог – пересчитываем условия включения
+        resetDecisionState("threshold changed to $threshold")
     }
 
     /**
@@ -222,6 +294,8 @@ class HeatingControlRepository(
     fun setAdaptiveHeating(enabled: Boolean) {
         Log.i(TAG, "Setting adaptive heating to: $enabled")
         prefsManager.adaptiveHeating = enabled
+        // Адаптивный режим напрямую влияет на решение – пересчитываем
+        resetDecisionState("adaptive changed to $enabled")
     }
 
     /**
@@ -247,6 +321,8 @@ class HeatingControlRepository(
     fun setCheckTempOnceOnStartup(enabled: Boolean) {
         Log.i(TAG, "Setting checkTempOnceOnStartup to: $enabled")
         prefsManager.checkTempOnceOnStartup = enabled
+        // Меняем стратегию принятия решения – пересчитываем как при новом запуске
+        resetDecisionState("check-once flag changed to $enabled")
     }
 
     /**
@@ -254,6 +330,45 @@ class HeatingControlRepository(
      */
     fun isCheckTempOnceOnStartup(): Boolean {
         return prefsManager.checkTempOnceOnStartup
+    }
+
+    /**
+     * Устанавливает таймер автоотключения подогрева.
+     * @param minutes время в минутах (0 = всегда, 1-20 = автоотключение)
+     */
+    fun setAutoOffTimer(minutes: Int) {
+        Log.i(TAG, "Setting auto-off timer to: $minutes minutes")
+        prefsManager.autoOffTimerMinutes = minutes
+        // Сбрасываем таймер и заставляем логику пересчитаться с новым значением
+        heatingActivatedAt = 0L
+        resetDecisionState("auto-off timer changed to $minutes")
+    }
+
+    /**
+     * Получает текущую настройку таймера автоотключения.
+     * @return время в минутах (0 = всегда)
+     */
+    fun getAutoOffTimer(): Int {
+        return prefsManager.autoOffTimerMinutes
+    }
+
+    /**
+     * Устанавливает источник температуры для условия включения подогрева.
+     * @param source "cabin" или "ambient"
+     */
+    fun setTemperatureSource(source: String) {
+        Log.i(TAG, "Setting temperature source to: $source")
+        prefsManager.temperatureSource = source
+        // Источник температуры поменялся – пересчитываем решение
+        resetDecisionState("temperature source changed to $source")
+    }
+
+    /**
+     * Получает текущий источник температуры.
+     * @return "cabin" или "ambient"
+     */
+    fun getTemperatureSource(): String {
+        return prefsManager.temperatureSource
     }
 
     /**

@@ -34,7 +34,13 @@ class VehicleMetricsRepository(
 ) {
     companion object {
         private const val TAG = "VehicleMetricsRepo"
-        private const val UPDATE_INTERVAL_MS = 1000L  // Обновление каждую секунду
+
+        // Частота "быстрых" обновлений (скорость, обороты, передача)
+        private const val UPDATE_INTERVAL_MS = 500L  // Обновление каждые полсекунды
+
+        // Каждые N тиков будем обновлять "медленные" метрики (топливо, температуры, пробеги и т.д.)
+        private const val SLOW_UPDATE_TICKS = 6L     // То есть раз в 3 секунды
+        private const val DEBUG_LOGS = false
     }
 
     // Реактивный state для UI
@@ -48,9 +54,17 @@ class VehicleMetricsRepository(
     @Volatile
     private var isMonitoring = false
 
+    // Последнее отправленное состояние для отсечения дубликатов
+    private var lastEmittedMetrics: VehicleMetrics? = null
+
+    // Флаги поддержки проблемных свойств, чтобы не спамить HAL и не ловить исключения каждый тик
+    private var isAverageFuelSupported = true
+    private var isTripMileageSupported = true
+    private var isTripTimeSupported = true
+
     /**
      * Запускает мониторинг метрик автомобиля.
-     * Обновляет state каждую секунду.
+     * Обновляет state с разделением на быстрые и медленные метрики.
      */
     fun startMonitoring() {
         if (isMonitoring) {
@@ -62,42 +76,74 @@ class VehicleMetricsRepository(
         isMonitoring = true
 
         monitorJob = scope.launch {
+            var tickCounter = 0L
+
             while (isActive && isMonitoring) {
                 try {
-                    // Читаем все метрики
-                    val metrics = VehicleMetrics(
-                        // Скорость и двигатель
-                        speed = readSpeed() ?: 0f,
-                        rpm = readRPM() ?: 0,
-                        gear = readGear() ?: "P",
+                    tickCounter++
+                    val isSlowTick = (tickCounter % SLOW_UPDATE_TICKS == 0L)
 
-                        // Температуры
-                        cabinTemperature = readCabinTemperature(),
-                        ambientTemperature = readAmbientTemperature(),
-                        engineOilTemp = readEngineOilTemp(),
-                        coolantTemp = readCoolantTemp(),
+                    // Берём предыдущее состояние, чтобы переиспользовать "медленные" поля
+                    val previous = lastEmittedMetrics ?: VehicleMetrics()
 
-                        // Топливо
-                        fuel = readFuelData(),
-                        rangeRemaining = readRangeRemaining(),
-                        averageFuel = readAverageFuel(),
+                    // Быстрые метрики: читаем каждый тик
+                    val speed = readSpeed() ?: previous.speed
+                    val rpm = readRPM() ?: previous.rpm
+                    val gear = readGear() ?: previous.gear
 
-                        // Пробег
-                        odometer = readOdometer(),
-                        tripMileage = readTripMileage(),
-                        tripTime = readTripTime(),
+                    val metrics: VehicleMetrics = if (isSlowTick) {
+                        // Медленные метрики: читаем раз в несколько тиков
+                        val rangeKm = readRangeRemaining()
+                        val avgFuel = readAverageFuel()
 
-                        // Шины
-                        tirePressure = readTirePressureData(),
+                        previous.copy(
+                            // быстрые поля
+                            speed = speed,
+                            rpm = rpm,
+                            gear = gear,
 
-                        // Батарея и другое
-                        batteryLevel = readBatteryLevel(),
-                        pm25Status = readPM25Status(),
-                        nightMode = readNightMode()
-                    )
+                            // температуры
+                            cabinTemperature = readCabinTemperature(),
+                            ambientTemperature = readAmbientTemperature(),
+                            engineOilTemp = readEngineOilTemp(),
+                            coolantTemp = readCoolantTemp(),
 
-                    // Обновляем state
-                    _vehicleMetrics.value = metrics
+                            // топливо
+                            fuel = readFuelData(rangeKm, avgFuel),
+                            rangeRemaining = rangeKm,
+                            averageFuel = avgFuel,
+
+                            // пробег
+                            odometer = readOdometer(),
+                            tripMileage = readTripMileage(),
+                            tripTime = readTripTime(),
+
+                            // шины
+                            tirePressure = readTirePressureData(),
+
+                            // батарея и другое
+                            batteryLevel = readBatteryLevel(),
+                            pm25Status = readPM25Status(),
+                            nightMode = readNightMode(),
+
+                            serviceDaysRemaining = readServiceDaysRemaining(),
+                            serviceDistanceRemainingKm = readServiceDistanceRemainingKm()
+                        )
+                    } else {
+                        // На быстрых тиках обновляем только скорость/обороты/передачу,
+                        // все остальные значения берём из предыдущего состояния
+                        previous.copy(
+                            speed = speed,
+                            rpm = rpm,
+                            gear = gear,
+                        )
+                    }
+
+                    // Обновляем state только если данные реально изменились
+                    if (metrics != lastEmittedMetrics) {
+                        _vehicleMetrics.value = metrics
+                        lastEmittedMetrics = metrics
+                    }
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Error reading vehicle metrics", e)
@@ -118,6 +164,7 @@ class VehicleMetricsRepository(
         isMonitoring = false
         monitorJob?.cancel()
         monitorJob = null
+        lastEmittedMetrics = null
     }
 
     // ========================================
@@ -129,7 +176,8 @@ class VehicleMetricsRepository(
      * Консолидация из AutoHeaterService:688-708
      */
     private fun readCabinTemperature(): Float? {
-        val raw = carManager.readIntProperty(VehiclePropertyConstants.CABIN_TEMPERATURE) ?: return null
+        val raw =
+            carManager.readIntProperty(VehiclePropertyConstants.CABIN_TEMPERATURE) ?: return null
         return VehiclePropertyConstants.rawToCelsius(raw)
     }
 
@@ -151,9 +199,11 @@ class VehicleMetricsRepository(
 
     /**
      * Читает температуру охлаждающей жидкости (°C).
+     * На этой платформе свойство приходит как Int, поэтому читаем через readIntProperty.
      */
     private fun readCoolantTemp(): Float? {
-        return carManager.readFloatProperty(VehiclePropertyConstants.COOLANT_TEMP)
+        val raw = carManager.readIntProperty(VehiclePropertyConstants.COOLANT_TEMP) ?: return null
+        return raw.toFloat()
     }
 
     /**
@@ -169,8 +219,15 @@ class VehicleMetricsRepository(
      * Формула: raw / 4
      */
     private fun readRPM(): Int? {
-        val raw = carManager.readIntProperty(VehiclePropertyConstants.ENGINE_RPM) ?: return null
-        return raw / 4
+        val raw = carManager.readIntProperty(VehiclePropertyConstants.ENGINE_RPM, 2) ?: return null
+        val rpm = raw / 4
+
+        // DEBUG: Логируем RPM только в отладочном режиме
+        if (DEBUG_LOGS && rpm > 100) {
+            Log.d(TAG, "RPM DEBUG: raw=$raw (0x${raw.toString(16)}), calculated=$rpm")
+        }
+
+        return rpm
     }
 
     /**
@@ -178,8 +235,19 @@ class VehicleMetricsRepository(
      * Консолидация из VehicleMetricsService
      */
     private fun readGear(): String? {
-        val gearCode = carManager.readIntProperty(VehiclePropertyConstants.GEAR_SELECTION) ?: return null
-        return VehiclePropertyConstants.gearToString(gearCode)
+        val gearCode =
+            carManager.readIntProperty(VehiclePropertyConstants.GEAR_SELECTION) ?: return null
+        val gearString = VehiclePropertyConstants.gearToString(gearCode)
+
+        // DEBUG: Логируем значения передачи только в отладочном режиме
+        if (DEBUG_LOGS) {
+            Log.d(
+                TAG,
+                "GEAR DEBUG: code=$gearCode (0x${gearCode.toString(16)}), string='$gearString'"
+            )
+        }
+
+        return gearString
     }
 
     /**
@@ -191,30 +259,42 @@ class VehicleMetricsRepository(
 
     /**
      * Читает средний расход топлива (л/100км).
-     * Консолидация из AutoHeaterService:797-821
-     * Пробует читать из нескольких area IDs.
+     * Если property не поддерживается и кидает IllegalArgumentException/InvocationTargetException,
+     * отключаем его после первой ошибки, чтобы не спамить HAL.
      */
     private fun readAverageFuel(): Float? {
-        for (areaId in VehiclePropertyConstants.AREA_IDS) {
-            // Сначала пробуем Float
-            val avgFuel = carManager.readFloatProperty(
-                VehiclePropertyConstants.AVERAGE_FUEL,
-                areaId
-            )
-            if (avgFuel != null && avgFuel > 0) {
-                return avgFuel
-            }
+        if (!isAverageFuelSupported) return null
 
-            // Потом Int (конвертируем в Float)
-            val rawInt = carManager.readIntProperty(
-                VehiclePropertyConstants.AVERAGE_FUEL,
-                areaId
-            )
-            if (rawInt != null && rawInt > 0) {
-                return rawInt / 10f
+        return try {
+            // Для AVERAGE_FUEL_CONSUMPTION по дампу доступны areaId 1 и 2, areaId 0 кидает IllegalArgumentException.
+            val supportedAreaIds = listOf(1, 2)
+            for (areaId in supportedAreaIds) {
+                // Сначала пробуем Float
+                val avgFuel = carManager.readFloatProperty(
+                    VehiclePropertyConstants.AVERAGE_FUEL,
+                    areaId
+                )
+                if (avgFuel != null && avgFuel > 0) {
+                    return avgFuel
+                }
+
+                // Потом Int (конвертируем в Float)
+                val rawInt = carManager.readIntProperty(
+                    VehiclePropertyConstants.AVERAGE_FUEL,
+                    areaId
+                )
+                if (rawInt != null && rawInt > 0) {
+                    return rawInt / 10f
+                }
             }
+            null
+        } catch (e: Exception) {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "Average fuel property not supported, disabling further reads", e)
+            }
+            isAverageFuelSupported = false
+            null
         }
-        return null
     }
 
     /**
@@ -227,16 +307,70 @@ class VehicleMetricsRepository(
 
     /**
      * Читает пробег текущей поездки (км).
+     * Если property не поддерживается, отключаем его после первой ошибки.
+     */
+    /**
+     * Читает пробег текущей поездки (км).
+     * Если property не поддерживается, отключаем его после первой ошибки.
+     *
+     * ВАЖНО:
+     * По логам 0x2740a679 (DRIVE_MILEAGE) с areaId 0 кидает IllegalArgumentException,
+     * поэтому пробуем только areaId 1 и 2.
      */
     private fun readTripMileage(): Float? {
-        return carManager.readFloatProperty(VehiclePropertyConstants.DRIVE_MILEAGE)
+        if (!isTripMileageSupported) return null
+
+        return try {
+            val supportedAreaIds = listOf(2)
+            for (areaId in supportedAreaIds) {
+                val value = carManager.readFloatProperty(
+                    VehiclePropertyConstants.DRIVE_MILEAGE,
+                    areaId
+                )
+                if (value != null && value >= 0f) {
+                    return value
+                }
+            }
+            null
+        } catch (e: Exception) {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "Trip mileage property not supported, disabling further reads", e)
+            }
+            isTripMileageSupported = false
+            null
+        }
     }
 
     /**
      * Читает время текущей поездки (секунды).
+     * Если property не поддерживается, отключаем его после первой ошибки.
+     *
+     * ВАЖНО:
+     * По логам 0x2740a67a (DRIVE_TIME) с areaId 0 кидает IllegalArgumentException,
+     * поэтому пробуем только areaId 1 и 2.
      */
     private fun readTripTime(): Int? {
-        return carManager.readIntProperty(VehiclePropertyConstants.DRIVE_TIME)
+        if (!isTripTimeSupported) return null
+
+        return try {
+            val supportedAreaIds = listOf(2)
+            for (areaId in supportedAreaIds) {
+                val value = carManager.readIntProperty(
+                    VehiclePropertyConstants.DRIVE_TIME,
+                    areaId
+                )
+                if (value != null && value >= 0) {
+                    return value
+                }
+            }
+            null
+        } catch (e: Exception) {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "Trip time property not supported, disabling further reads", e)
+            }
+            isTripTimeSupported = false
+            null
+        }
     }
 
     /**
@@ -262,33 +396,94 @@ class VehicleMetricsRepository(
     }
 
     /**
-     * Читает данные о топливе.
-     * Консолидация из AutoHeaterService:740-759
+     * Остаток до ТО по времени (дни), AP_TIME_REMAINING: 0x2140301c
+     */
+    private fun readServiceDaysRemaining(): Int? {
+        return try {
+            // по аналогии с DRIVE_* используем areaId 2 (и можем добавить 1 на всякий случай)
+            val supportedAreaIds = listOf(2, 1)
+            for (areaId in supportedAreaIds) {
+                val value = carManager.readIntProperty(0x2140301c, areaId)
+                if (value != null && value > 0) {
+                    return value
+                }
+            }
+            null
+        } catch (e: Exception) {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "Failed to read AP_TIME_REMAINING (0x2140301c)", e)
+            }
+            null
+        }
+    }
+
+    /**
+     * Остаток до ТО по пробегу (км), AP_TOTAL_MIL_REMAINING: 0x2140301b
+     */
+    private fun readServiceDistanceRemainingKm(): Int? {
+        return try {
+            val supportedAreaIds = listOf(2, 1)
+            for (areaId in supportedAreaIds) {
+                val value = carManager.readIntProperty(0x2140301b, areaId)
+                if (value != null && value > 0) {
+                    return value
+                }
+            }
+            null
+        } catch (e: Exception) {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "Failed to read AP_TOTAL_MIL_REMAINING (0x2140301b)", e)
+            }
+            null
+        }
+    }
+
+    /**
+     * Читает данные о топливе на основе уже полученных rangeKm и averageFuel.
      *
      * Рассчитывает:
-     * - rangeKm из RANGE_REMAINING
-     * - currentFuelLiters на основе averageFuel
+     * - currentFuelLiters из rangeKm и averageFuel
      * - capacityLiters константа для Geely Coolray
+     *
+     * ВАЖНО:
+     * - Не вызывает readAverageFuel() внутри, чтобы не читать property дважды
+     * - Не использует 0x11600307, т.к. он всегда возвращает дефолт 1500 на этой платформе
      */
-    private fun readFuelData(): FuelData? {
-        val rangeKm = readRangeRemaining() ?: return null
-        val averageFuel = readAverageFuel() ?: 7.5f  // дефолтный расход
-
-        // Рассчитываем текущий объем топлива
-        val currentFuelLiters = if (averageFuel > 0) {
-            (rangeKm * averageFuel) / 100f
-        } else {
-            0f
-        }
-
-        // Емкость бака для Geely Binyue L / Coolray
+    private fun readFuelData(rangeKm: Float?, averageFuel: Float?): FuelData? {
         val capacityLiters = 45f
 
-        return FuelData(
-            rangeKm = rangeKm,
-            currentFuelLiters = currentFuelLiters.coerceIn(0f, capacityLiters),
-            capacityLiters = capacityLiters
-        )
+        // Вычисляем currentFuelLiters только если есть оба значения
+        val currentFuelLiters = if (rangeKm != null && averageFuel != null && averageFuel > 0) {
+            if (DEBUG_LOGS) {
+                Log.d(
+                    TAG,
+                    "FuelData: rangeKm=$rangeKm, avgFuel=$averageFuel → currentFuel=${(rangeKm * averageFuel) / 100f}L"
+                )
+            }
+            (rangeKm * averageFuel) / 100f
+        } else {
+            null
+        }
+
+        // Возвращаем данные если есть хоть что-то
+        return if (rangeKm != null || currentFuelLiters != null) {
+            if (DEBUG_LOGS) {
+                Log.d(
+                    TAG,
+                    "FuelData: Возвращаем данные: rangeKm=$rangeKm, currentFuel=$currentFuelLiters"
+                )
+            }
+            FuelData(
+                rangeKm = rangeKm,
+                currentFuelLiters = currentFuelLiters?.coerceIn(0f, capacityLiters),
+                capacityLiters = capacityLiters
+            )
+        } else {
+            if (DEBUG_LOGS) {
+                Log.w(TAG, "FuelData: Нет данных для возврата")
+            }
+            null
+        }
     }
 
     /**
@@ -301,28 +496,37 @@ class VehicleMetricsRepository(
             // Давление возвращается как Float, конвертируем в Int
             // Температура: преобразуем из °F в °C
             val frontLeft = TireData(
-                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FL)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FL)?.let { ((it - 32) * 5) / 9 }
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FL)
+                    ?.toInt(),
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FL)
+                    ?.let { ((it - 32) * 5) / 9 }
             )
 
             val frontRight = TireData(
-                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FR)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FR)?.let { ((it - 32) * 5) / 9 }
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_FR)
+                    ?.toInt(),
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_FR)
+                    ?.let { ((it - 32) * 5) / 9 }
             )
 
             val rearLeft = TireData(
-                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RL)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RL)?.let { ((it - 32) * 5) / 9 }
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RL)
+                    ?.toInt(),
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RL)
+                    ?.let { ((it - 32) * 5) / 9 }
             )
 
             val rearRight = TireData(
-                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RR)?.toInt(),
-                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RR)?.let { ((it - 32) * 5) / 9 }
+                pressure = carManager.readFloatProperty(VehiclePropertyConstants.TPMS_PRESSURE_RR)
+                    ?.toInt(),
+                temperature = carManager.readIntProperty(VehiclePropertyConstants.TPMS_TEMP_RR)
+                    ?.let { ((it - 32) * 5) / 9 }
             )
 
             // Возвращаем только если хотя бы одна шина имеет данные
             if (frontLeft.pressure != null || frontRight.pressure != null ||
-                rearLeft.pressure != null || rearRight.pressure != null) {
+                rearLeft.pressure != null || rearRight.pressure != null
+            ) {
                 return TirePressureData(
                     frontLeft = frontLeft,
                     frontRight = frontRight,
@@ -332,7 +536,9 @@ class VehicleMetricsRepository(
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error reading tire pressure data", e)
+            if (DEBUG_LOGS) {
+                Log.e(TAG, "Error reading tire pressure data", e)
+            }
         }
 
         return null

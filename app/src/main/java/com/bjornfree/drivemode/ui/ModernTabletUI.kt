@@ -48,6 +48,10 @@ import com.bjornfree.drivemode.core.AutoSeatHeatService
 import com.bjornfree.drivemode.core.DriveModeService
 import com.bjornfree.drivemode.core.VehicleMetricsService
 import com.bjornfree.drivemode.domain.model.TireData
+import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
+import com.bjornfree.drivemode.ui.tabs.AutoHeatingTabOptimized
+import com.bjornfree.drivemode.ui.tabs.DiagnosticsTabOptimized
+import com.bjornfree.drivemode.ui.tabs.ConsoleTabOptimized
 import com.bjornfree.drivemode.domain.model.TirePressureData
 import com.bjornfree.drivemode.presentation.viewmodel.*
 import org.koin.androidx.compose.koinViewModel
@@ -138,10 +142,10 @@ fun ModernTabletUI() {
                     .padding(24.dp)
             ) {
                 when (selectedTab) {
-                    0 -> VehicleInfoTab(viewModel = vehicleInfoViewModel)
-                    1 -> AutoHeatingTab(viewModel = autoHeatingViewModel)
-                    2 -> DiagnosticsTab(viewModel = diagnosticsViewModel)
-                    3 -> ConsoleTab(viewModel = consoleViewModel)
+                    0 -> VehicleInfoTabOptimized(viewModel = vehicleInfoViewModel)
+                    1 -> AutoHeatingTabOptimized(viewModel = autoHeatingViewModel)
+                    2 -> DiagnosticsTabOptimized(viewModel = diagnosticsViewModel)
+                    3 -> ConsoleTabOptimized(viewModel = consoleViewModel)
                     4 -> SettingsTab(viewModel = settingsViewModel)
                 }
             }
@@ -198,1315 +202,16 @@ fun ModernTabletUI() {
 
 data class TabItem(val title: String, val icon: ImageVector)
 
-/**
- * Вкладка с информацией об автомобиле (бортовой компьютер)
- */
-@Composable
-fun VehicleInfoTab(viewModel: VehicleInfoViewModel) {
-    // Реактивное получение метрик из ViewModel
-    val metrics by viewModel.vehicleMetrics.collectAsState()
-
-    // Извлекаем данные из метрик
-    val cabinTemp = metrics.cabinTemperature
-    val ambientTemp = metrics.ambientTemperature
-    val oilTemp = metrics.engineOilTemp
-    val coolantTemp = metrics.coolantTemp
-    val fuel = metrics.fuel?.currentFuelLiters
-    val avgFuel = metrics.averageFuel
-    val odometer = metrics.odometer
-    val tripMileage = metrics.tripMileage
-    val tripTime = metrics.tripTime
-    val tirePressure = metrics.tirePressure
-    val gear = metrics.gear
-    val speed = metrics.speed
-    val rpm = metrics.rpm.toFloat()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Заголовок
-        Text(
-            "Бортовой компьютер",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-
-        // Карточка: Коробка передач
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    "Коробка передач",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Текущая передача (большая)
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Передача",
-                        value = gear ?: "—",
-                        color = when (gear) {
-                            "P" -> Color(0xFFE53935)
-                            "R" -> Color(0xFFFF9800)
-                            "N" -> Color(0xFF2196F3)
-                            "D" -> Color(0xFF4CAF50)
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
-                    )
-
-                    // Скорость
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Скорость",
-                        value = speed?.let { "${it.toInt()} км/ч" } ?: "—",
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    // Обороты
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Обороты",
-                        value = rpm?.let { "${it.toInt()} RPM" } ?: "—",
-                        color = when {
-                            rpm == null -> Color.Gray
-                            rpm!! < 1000 -> Color(0xFF4CAF50)
-                            rpm!! < 3000 -> MaterialTheme.colorScheme.onSurface
-                            else -> Color(0xFFFF9800)
-                        }
-                    )
-                }
-            }
-        }
-
-        // Карточка: Топливо и давление в шинах
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Max) // Выравниваем высоты обеих карточек
-                    .padding(20.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                // Топливо (слева)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                ) {
-                    FuelGauge(
-                        fuelLiters = fuel,
-                        tankCapacity = 45f
-                    )
-                }
-
-                // Давление в шинах (справа)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                ) {
-                    TirePressureDisplay(tirePressureData = tirePressure)
-                }
-            }
-        }
-
-        // Карточка: Температура
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    "Температура",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                // Первая строка: Салон и Снаружи
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "В салоне",
-                        value = cabinTemp?.let { "${it.toInt()}°C" } ?: "—",
-                        color = when {
-                            cabinTemp == null -> Color.Gray
-                            cabinTemp!! < 0f -> Color(0xFF2196F3)
-                            cabinTemp!! < 15f -> Color(0xFF03A9F4)
-                            else -> Color(0xFFFF9800)
-                        }
-                    )
-
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Снаружи",
-                        value = ambientTemp?.let { "${it.toInt()}°C" } ?: "—",
-                        color = when {
-                            ambientTemp == null -> Color.Gray
-                            ambientTemp!! < 0f -> Color(0xFF2196F3)
-                            ambientTemp!! < 10f -> Color(0xFF03A9F4)
-                            else -> Color(0xFF4CAF50)
-                        }
-                    )
-                }
-
-                HorizontalDivider()
-
-                // Вторая строка: Масло и Охлаждающая жидкость
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Масло двигателя",
-                        value = oilTemp?.let { "${it.toInt()}°C" } ?: "—",
-                        color = when {
-                            oilTemp == null -> Color.Gray
-                            oilTemp!! < 60f -> Color(0xFF2196F3)
-                            oilTemp!! < 90f -> Color(0xFF4CAF50)
-                            oilTemp!! < 110f -> Color(0xFFFF9800)
-                            else -> Color(0xFFE53935)
-                        }
-                    )
-
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Охлаждающая жидкость",
-                        value = coolantTemp?.let { "${it.toInt()}°C" } ?: "—",
-                        color = when {
-                            coolantTemp == null -> Color.Gray
-                            coolantTemp!! < 60f -> Color(0xFF2196F3)
-                            coolantTemp!! < 90f -> Color(0xFF4CAF50)
-                            coolantTemp!! < 105f -> Color(0xFFFF9800)
-                            else -> Color(0xFFE53935)
-                        }
-                    )
-                }
-            }
-        }
-
-        // Карточка: Расход и пробег
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    "Расход и пробег",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                // Первая строка: Средний расход и Запас хода
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Расход (средний)",
-                        value = avgFuel?.let { "${String.format("%.1f", it)} л/100км" } ?: "—",
-                        color = when {
-                            avgFuel == null -> Color.Gray
-                            avgFuel!! < 7f -> Color(0xFF4CAF50)
-                            avgFuel!! < 10f -> Color(0xFFFF9800)
-                            else -> Color(0xFFE53935)
-                        }
-                    )
-
-                    val exactRange = metrics.fuel?.rangeKm
-                    val range = exactRange ?: if (fuel != null && avgFuel != null && avgFuel!! > 0) {
-                        (fuel!! / avgFuel!!) * 100
-                    } else null
-
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Запас хода",
-                        value = range?.let { "${String.format("%.0f", it)} км" } ?: "—",
-                        color = when {
-                            range == null -> Color.Gray
-                            range < 50 -> Color(0xFFE53935)
-                            range < 150 -> Color(0xFFFF9800)
-                            else -> Color(0xFF4CAF50)
-                        }
-                    )
-                }
-
-                HorizontalDivider()
-
-                // Вторая строка: Общий пробег и Пробег поездки
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Пробег общий",
-                        value = odometer?.let { "${String.format("%.0f", it)} км" } ?: "—",
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Пробег поездки",
-                        value = tripMileage?.let { "${String.format("%.1f", it)} км" } ?: "—",
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                HorizontalDivider()
-
-                // Третья строка: Время поездки
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    val tripTimeFormatted = tripTime?.let {
-                        val hours = (it / 60).toInt()
-                        val mins = (it % 60).toInt()
-                        "${hours}ч ${mins}м"
-                    } ?: "—"
-
-                    InfoItem(
-                        modifier = Modifier.weight(1f),
-                        label = "Время поездки",
-                        value = tripTimeFormatted,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-}
-
-/**
- * Компонент для отображения одного показателя
- */
-@Composable
-fun InfoItem(
-    modifier: Modifier = Modifier,
-    label: String,
-    value: String,
-    color: Color
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
-        )
-        Text(
-            value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
-    }
-}
-
-@Composable
-fun AutoHeatingTab(viewModel: AutoHeatingViewModel) {
-    val ctx = LocalContext.current
-
-    // Реактивное получение состояния из ViewModel
-    val heatingState by viewModel.heatingState.collectAsState()
-    val currentMode by viewModel.currentMode.collectAsState()
-    val tempThreshold by viewModel.temperatureThreshold.collectAsState()
-    val adaptiveHeating by viewModel.adaptiveHeating.collectAsState()
-    val heatingLevel by viewModel.heatingLevel.collectAsState()
-    val checkTempOnceOnStartup by viewModel.checkTempOnceOnStartup.collectAsState()
-
-    // Извлекаем данные из состояния
-    val isActive = heatingState.isActive
-    val currentTemp = heatingState.currentTemp
-
-    // Локальное состояние для UI
-    val mode = currentMode.key  // Преобразуем enum в строку для совместимости
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Заголовок секции
-        Text(
-            "Автоматический подогрев сидений",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-
-        // Карточка режима работы
-        ModeCard(
-            mode = mode,
-            onModeChange = { newModeKey ->
-                val newMode = com.bjornfree.drivemode.domain.model.HeatingMode.fromKey(newModeKey)
-                viewModel.setHeatingMode(newMode)
-            }
-        )
-
-        // Карточка адаптивного режима
-        AdaptiveHeatingCard(
-            enabled = adaptiveHeating,
-            onEnabledChange = { enabled: Boolean ->
-                viewModel.setAdaptiveHeating(enabled)
-            }
-        )
-
-        // Карточка "проверка температуры только при запуске"
-        CheckTempOnceOnStartupCard(
-            enabled = checkTempOnceOnStartup,
-            onEnabledChange = { enabled ->
-                viewModel.setCheckTempOnceOnStartup(enabled)
-            }
-        )
-
-        // Карточка температурного порога (только если не адаптивный режим)
-        if (!adaptiveHeating) {
-            TemperatureThresholdCard(
-                threshold = tempThreshold.toFloat(),
-                onThresholdChange = { threshold ->
-                    viewModel.setTemperatureThreshold(threshold.toInt())
-                }
-            )
-
-            // Карточка выбора уровня подогрева
-            HeatingLevelCard(
-                level = heatingLevel,
-                onLevelChange = { level ->
-                    viewModel.setHeatingLevel(level)
-                }
-            )
-        }
-
-        // Информационная карточка о состоянии
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "Текущее состояние",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    "Подогрев: ${if (isActive) "Активен ✓" else "Неактивен"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (currentTemp != null) {
-                    Text(
-                        "Температура в салоне: ${currentTemp}°C",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                if (heatingState.reason != null) {
-                    Text(
-                        "Причина: ${heatingState.reason}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // Кнопка теста (пока недоступна)
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "Тестирование",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                FilledTonalButton(
-                    onClick = {
-                        Toast.makeText(ctx, "Функция тестирования будет добавлена в следующей версии", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = false
-                ) {
-                    Icon(Icons.Default.PlayArrow, "Тест", modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Запустить тест подогрева")
-                }
-            }
-        }
-    }
-}
-
-/**
- * Визуальный индикатор топлива в стиле ретро-приборки с динамическими цветами
- */
-@Composable
-fun FuelGauge(
-    fuelLiters: Float?,
-    tankCapacity: Float = 45f
-) {
-    val fuelPercent = if (fuelLiters != null && fuelLiters > 0) {
-        (fuelLiters / tankCapacity * 100).coerceIn(0f, 100f)
-    } else {
-        0f
-    }
-
-    // Определяем основной цвет в зависимости от уровня топлива
-    val gaugeColor = when {
-        fuelPercent < 15f -> Color(0xFFE53935)  // Красный - критический
-        fuelPercent < 30f -> Color(0xFFFF6F00)  // Темно-оранжевый - низкий
-        fuelPercent < 50f -> Color(0xFFFFA726)  // Оранжевый
-        fuelPercent < 70f -> Color(0xFFFFD54F)  // Желтый
-        fuelPercent < 85f -> Color(0xFF9CCC65)  // Светло-зеленый
-        else -> Color(0xFF66BB6A)               // Зеленый - полный
-    }
-
-    // Цвет фона карточки с легким оттенком
-    val backgroundColor = when {
-        fuelPercent < 15f -> Color(0xFFE53935).copy(alpha = 0.08f)  // Красноватый фон
-        fuelPercent < 30f -> Color(0xFFFF9800).copy(alpha = 0.08f)  // Оранжевый фон
-        else -> Color(0xFF4CAF50).copy(alpha = 0.05f)               // Зеленоватый фон
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight() // Заполняем всю доступную высоту
-            .background(
-                backgroundColor,
-                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-            )
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center // Центрируем контент по вертикали
-    ) {
-        // Визуальная шкала
-        Box(
-            modifier = Modifier
-                .size(220.dp)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val canvasWidth = size.width
-                val canvasHeight = size.height
-                val centerX = canvasWidth / 2f
-                val centerY = canvasHeight * 0.75f
-                val radius = canvasWidth * 0.38f
-
-                val startAngle = 180f
-                val sweepAngle = 180f
-
-                // Фон шкалы (темнее для лучшего контраста)
-                drawArc(
-                    color = Color(0xFF1A1A1A),
-                    startAngle = startAngle,
-                    sweepAngle = sweepAngle,
-                    useCenter = false,
-                    topLeft = Offset(centerX - radius, centerY - radius),
-                    size = Size(radius * 2, radius * 2),
-                    style = Stroke(width = 24f, cap = StrokeCap.Round)
-                )
-
-                // Цветная шкала с плавным градиентом от красного (слева, Empty) к зеленому (справа, Full)
-                val fuelSweep = sweepAngle * (fuelPercent / 100f)
-
-                drawArc(
-                    brush = Brush.sweepGradient(
-                        0f to Color(0xFF66BB6A),      // 0° (справа) - зеленый (Full)
-                        0.125f to Color(0xFF9CCC65),  // светло-зеленый
-                        0.25f to Color(0xFFFFD54F),   // желтый
-                        0.375f to Color(0xFFFFA726),  // оранжевый
-                        0.4375f to Color(0xFFFF6F00), // темно-оранжевый
-                        0.5f to Color(0xFFE53935),    // 180° (слева) - красный (Empty)
-                        0.5625f to Color(0xFFFF6F00), // темно-оранжевый (обратно)
-                        0.625f to Color(0xFFFFA726),  // оранжевый
-                        0.75f to Color(0xFFFFD54F),   // желтый
-                        0.875f to Color(0xFF9CCC65),  // светло-зеленый
-                        1f to Color(0xFF66BB6A),      // 360° = 0° (справа) - зеленый (Full)
-                        center = Offset(centerX, centerY)
-                    ),
-                    startAngle = startAngle,
-                    sweepAngle = fuelSweep,
-                    useCenter = false,
-                    topLeft = Offset(centerX - radius, centerY - radius),
-                    size = Size(radius * 2, radius * 2),
-                    style = Stroke(width = 24f, cap = StrokeCap.Round)
-                )
-
-                // Добавляем внутреннее свечение для эффекта глубины
-                if (fuelSweep > 0) {
-                    drawArc(
-                        color = gaugeColor.copy(alpha = 0.25f),
-                        startAngle = startAngle,
-                        sweepAngle = fuelSweep,
-                        useCenter = false,
-                        topLeft = Offset(centerX - radius + 6f, centerY - radius + 6f),
-                        size = Size((radius - 6f) * 2, (radius - 6f) * 2),
-                        style = Stroke(width = 10f, cap = StrokeCap.Round)
-                    )
-                }
-
-                // Отметки на шкале
-                val marks = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
-                marks.forEach { mark ->
-                    val angle = startAngle + sweepAngle * mark
-                    val angleRad = angle * PI / 180.0
-                    val x1 = centerX + (radius - 25f) * cos(angleRad).toFloat()
-                    val y1 = centerY + (radius - 25f) * sin(angleRad).toFloat()
-                    val x2 = centerX + (radius - 5f) * cos(angleRad).toFloat()
-                    val y2 = centerY + (radius - 5f) * sin(angleRad).toFloat()
-
-                    drawLine(
-                        color = Color.White,
-                        start = Offset(x1, y1),
-                        end = Offset(x2, y2),
-                        strokeWidth = 2f
-                    )
-                }
-
-                // Стрелка указателя
-                val pointerAngle = startAngle + sweepAngle * (fuelPercent / 100f)
-                val pointerLength = radius - 30f
-
-                rotate(degrees = pointerAngle, pivot = Offset(centerX, centerY)) {
-                    drawLine(
-                        color = Color.Black.copy(alpha = 0.3f),
-                        start = Offset(centerX + 2f, centerY + 2f),
-                        end = Offset(centerX + pointerLength + 2f, centerY + 2f),
-                        strokeWidth = 4f,
-                        cap = StrokeCap.Round
-                    )
-                    drawLine(
-                        color = Color.White,
-                        start = Offset(centerX, centerY),
-                        end = Offset(centerX + pointerLength, centerY),
-                        strokeWidth = 3f,
-                        cap = StrokeCap.Round
-                    )
-                }
-
-                // Центральная точка
-                drawCircle(
-                    color = Color(0xFF424242),
-                    radius = 8f,
-                    center = Offset(centerX, centerY)
-                )
-                drawCircle(
-                    color = Color.White,
-                    radius = 5f,
-                    center = Offset(centerX, centerY)
-                )
-            }
-
-            // Метки E и F
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 120.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    "E",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFE53935),
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "F",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF4CAF50),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Числовые значения с динамическими цветами
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = when (fuelLiters) {
-                    null -> "Нет данных"
-                    else -> "${String.format("%.1f", fuelLiters)}л"
-                },
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (fuelLiters == null) Color.Gray else gaugeColor
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = when (fuelLiters) {
-                        null -> "—"
-                        else -> "${fuelPercent.toInt()}%"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (fuelLiters == null) Color.Gray else gaugeColor
-                )
-                Text(
-                    "•",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray
-                )
-                Text(
-                    text = "от ${tankCapacity.toInt()}л",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray
-                )
-            }
-
-            // Индикатор уровня текстом
-            if (fuelLiters != null) {
-                Text(
-                    text = when {
-                        fuelPercent < 15f -> "⚠️ КРИТИЧЕСКИЙ УРОВЕНЬ"
-                        fuelPercent < 30f -> "Низкий уровень"
-                        fuelPercent < 50f -> "Средний уровень"
-                        else -> "Нормальный уровень"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = gaugeColor,
-                    fontWeight = if (fuelPercent < 15f) FontWeight.Bold else FontWeight.Normal
-                )
-            }
-        }
-    }
-}
-
-/**
- * Компонент для отображения давления в шинах в виде схемы автомобиля
- */
-@Composable
-fun TirePressureDisplay(tirePressureData: TirePressureData?) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight() // Заполняем всю доступную высоту
-            .background(
-                MaterialTheme.colorScheme.surface,
-                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-            )
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            "Давление в шинах",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Основной контент - заполняет оставшееся пространство
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
-        ) {
-            // Схема автомобиля с шинами (вид сверху, машина вертикально)
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Левая сторона
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    TireItem(
-                        label = "FL",
-                        tire = tirePressureData?.frontLeft ?: TireData(null, null)
-                    )
-                    Spacer(Modifier.height(20.dp))
-                    TireItem(
-                        label = "RL",
-                        tire = tirePressureData?.rearLeft ?: TireData(null, null)
-                    )
-                }
-
-                // Машина по центру (всегда)
-                Image(
-                    painter = painterResource(id = R.drawable.car),
-                    contentDescription = "Car image",
-                    modifier = Modifier
-                        .width(120.dp)
-                        .fillMaxHeight()
-                        .padding(vertical = 20.dp),
-                    contentScale = ContentScale.Fit
-                )
-
-                // Правая сторона
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    TireItem(
-                        label = "FR",
-                        tire = tirePressureData?.frontRight ?: TireData(null, null)
-                    )
-                    Spacer(Modifier.height(20.dp))
-                    TireItem(
-                        label = "RR",
-                        tire = tirePressureData?.rearRight ?: TireData(null, null)
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Отображение одной шины с давлением и температурой
- */
-@Composable
-fun TireItem(label: String, tire: TireData, modifier: Modifier = Modifier) {
-    val pressure = tire.pressure
-    val temperature = tire.temperature
-
-    // Определяем цвет в зависимости от давления (нормальное 220-250 кПа)
-    val pressureColor = when {
-        pressure == null -> Color.Gray
-        pressure < 200 -> Color(0xFFE53935)  // Красный - низкое
-        pressure > 260 -> Color(0xFFFF9800)  // Оранжевый - высокое
-        else -> Color(0xFF4CAF50)            // Зеленый - нормальное
-    }
-
-    // Полное название колеса
-    val fullLabel = when (label) {
-        "FL" -> "Перед. Л"
-        "FR" -> "Перед. П"
-        "RL" -> "Зад. Л"
-        "RR" -> "Зад. П"
-        else -> label
-    }
-
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        // Подпись колеса
-        Text(
-            text = fullLabel,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Medium
-        )
-
-        // Значения давления и температуры
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = if (pressure != null) "${pressure}кПа" else "—",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = pressureColor
-            )
-            Text(
-                text = if (temperature != null) "${temperature}°C" else "—",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (temperature != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-fun ModeCard(mode: String, onModeChange: (String) -> Unit) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "Режим работы",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ModeOption("Выключен", "off", mode, onModeChange, Icons.Default.Close)
-                ModeOption("Только водитель", "driver", mode, onModeChange, Icons.Default.Person)
-                ModeOption("Только пассажир", "passenger", mode, onModeChange, Icons.Default.Person)
-                ModeOption("Оба сиденья", "both", mode, onModeChange, Icons.Default.Favorite)
-            }
-        }
-    }
-}
-
-@Composable
-fun ModeOption(
-    label: String,
-    value: String,
-    currentMode: String,
-    onModeChange: (String) -> Unit,
-    icon: ImageVector
-) {
-    FilterChip(
-        selected = currentMode == value,
-        onClick = { onModeChange(value) },
-        label = { Text(label) },
-        leadingIcon = {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-        },
-        modifier = Modifier.fillMaxWidth()
-    )
-}
-
-@Composable
-fun HeatLevelCard(heatLevel: Int, enabled: Boolean = true, onHeatLevelChange: (Int) -> Unit) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .alpha(if (enabled) 1f else 0.5f),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Column {
-                Text(
-                    "Мощность обогрева (фиксированная)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (!enabled) {
-                    Text(
-                        "Отключено (используется адаптивный режим)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                (1..3).forEach { level ->
-                    FilterChip(
-                        selected = heatLevel == level,
-                        onClick = { if (enabled) onHeatLevelChange(level) },
-                        label = { Text("Уровень $level") },
-                        modifier = Modifier.weight(1f),
-                        enabled = enabled
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AdaptiveHeatingCard(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
-) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Адаптивный режим",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        if (enabled) "Уровень подогрева зависит от температуры (0-10°C)"
-                        else "Фиксированный уровень подогрева + температурный порог",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onEnabledChange
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun CheckTempOnceOnStartupCard(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
-) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Проверка только при запуске",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        if (enabled) "Подогрев включается/выключается только один раз при запуске двигателя"
-                        else "Постоянный мониторинг температуры (может включаться/выключаться во время поездки)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onEnabledChange
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun TemperatureThresholdCard(
-    threshold: Float,
-    onThresholdChange: (Float) -> Unit
-) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "Температурный порог",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                "Подогрев включается при температуре ниже порога",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Порог: ниже ${threshold.toInt()}°C",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Slider(
-                    value = threshold,
-                    onValueChange = onThresholdChange,
-                    valueRange = 5f..20f,
-                    steps = 14
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun HeatingLevelCard(
-    level: Int,
-    onLevelChange: (Int) -> Unit
-) {
-    val levelNames = listOf("Выкл", "Низкий", "Средний", "Высокий")
-
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "Уровень подогрева",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                "Фиксированный уровень подогрева сидений",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Уровень: ${levelNames.getOrElse(level) { "?" }} ($level)",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Slider(
-                    value = level.toFloat(),
-                    onValueChange = { onLevelChange(it.toInt()) },
-                    valueRange = 0f..3f,
-                    steps = 2
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun DiagnosticsTab(viewModel: DiagnosticsViewModel) {
-    val ctx = LocalContext.current
-
-    // Реактивное получение статусов из ViewModel
-    val carApiStatus by viewModel.carApiStatus.collectAsState()
-    val carManagerStatus by viewModel.carManagerStatus.collectAsState()
-    val metricsUpdateCount by viewModel.metricsUpdateCount.collectAsState()
-
-    // Проверка статусов сервисов
-    LaunchedEffect(Unit) {
-        viewModel.checkServicesStatus()
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            "Диагностика и тестирование",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-
-        // Статусы сервисов
-        Text(
-            "Статус сервисов",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Статус Car API
-            ElevatedCard(
-                modifier = Modifier.weight(1f)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Статус-кружочек
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(
-                                    color = when (carApiStatus) {
-                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> Color(0xFF4CAF50)
-                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> Color(0xFFE53935)
-                                        else -> Color(0xFFFFA726)
-                                    },
-                                    shape = CircleShape
-                                )
-                        )
-                        Text(
-                            "Car API",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Text(
-                        when (carApiStatus) {
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> "Работает ✓"
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> "Ошибка"
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Stopped -> "Остановлен"
-                            else -> "Неизвестно"
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            // Статус CarPropertyManager
-            ElevatedCard(
-                modifier = Modifier.weight(1f)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Статус-кружочек
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(
-                                    color = when (carManagerStatus) {
-                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> Color(0xFF4CAF50)
-                                        com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> Color(0xFFE53935)
-                                        else -> Color(0xFFFFA726)
-                                    },
-                                    shape = CircleShape
-                                )
-                        )
-                        Text(
-                            "CarPropertyManager",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Text(
-                        when (carManagerStatus) {
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running -> "Работает ✓"
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Error -> "Ошибка"
-                            com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Stopped -> "Остановлен"
-                            else -> "Неизвестно"
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            // Счетчик обновлений метрик
-            ElevatedCard(
-                modifier = Modifier.weight(1f)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Статус-кружочек
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(
-                                    color = if (metricsUpdateCount > 0) Color(0xFF4CAF50) else Color(0xFFFFA726),
-                                    shape = CircleShape
-                                )
-                        )
-                        Text(
-                            "Обновления метрик",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Text(
-                        "Счетчик: $metricsUpdateCount",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-
-        // Тесты свойств
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "Тесты свойств ECARX",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                FilledTonalButton(
-                    onClick = {
-                        val report = viewModel.testFuelDiagnostics()
-                        Toast.makeText(
-                            ctx,
-                            "Отчет создан. Проверьте консоль для деталей.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        android.util.Log.i("DiagnosticsTab", report)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Диагностика ТОПЛИВА")
-                }
-            }
-        }
-    }
-}
-
 @Composable
 fun SettingsTab(viewModel: SettingsViewModel) {
     val ctx = LocalContext.current
 
     // Реактивное получение настроек из ViewModel
-    val demoMode by viewModel.demoMode.collectAsState()
     val borderEnabled by viewModel.borderEnabled.collectAsState()
     val panelEnabled by viewModel.panelEnabled.collectAsState()
+    val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
+    val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
 
     // Локальные состояния для разрешений (проверяются периодически)
     var overlayGranted by remember { mutableStateOf(viewModel.hasSystemAlertWindowPermission()) }
@@ -1535,7 +240,7 @@ fun SettingsTab(viewModel: SettingsViewModel) {
             fontWeight = FontWeight.Bold
         )
 
-        // Demo Mode
+        // Тема приложения
         ElevatedCard(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -1543,38 +248,195 @@ fun SettingsTab(viewModel: SettingsViewModel) {
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Text(
+                    "Тема приложения",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Demo Mode",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            if (demoMode) "AOSP возвращает тестовые значения" else "Читаем реальные данные",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (demoMode)
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Switch(
-                        checked = demoMode,
-                        onCheckedChange = { enabled ->
-                            viewModel.setDemoMode(enabled)
-                            Toast.makeText(
-                                ctx,
-                                "Demo Mode ${if (enabled) "включен" else "выключен"}",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
+                    // Кнопка "Авто"
+                    FilterChip(
+                        selected = themeMode == "auto",
+                        onClick = { viewModel.setThemeMode("auto") },
+                        label = { Text("Авто") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Кнопка "Светлая"
+                    FilterChip(
+                        selected = themeMode == "light",
+                        onClick = { viewModel.setThemeMode("light") },
+                        label = { Text("Светлая") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Кнопка "Темная"
+                    FilterChip(
+                        selected = themeMode == "dark",
+                        onClick = { viewModel.setThemeMode("dark") },
+                        label = { Text("Темная") },
+                        modifier = Modifier.weight(1f)
                     )
                 }
+
+                Text(
+                    when (themeMode) {
+                        "auto" -> "Следует системной теме"
+                        "light" -> "Всегда светлая тема"
+                        "dark" -> "Всегда темная тема"
+                        else -> "Следует системной теме"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Оверлеи и интерфейс
+        Text(
+            "Оверлеи и интерфейс",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        // Border Overlay
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Рамка при смене режима",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Отображать цветную рамку при переключении режимов вождения",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = borderEnabled,
+                    onCheckedChange = { viewModel.setBorderEnabled(it) }
+                )
+            }
+        }
+
+        // Panel Overlay
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Панель режима вождения",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Отображать информационную панель с названием текущего режима",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = panelEnabled,
+                    onCheckedChange = { viewModel.setPanelEnabled(it) }
+                )
+            }
+        }
+
+        // Metrics Bar
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Нижняя полоска метрик",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Отображать полоску с режимом, передачей, скоростью, запасом хода, температурой и давлением в шинах",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = metricsBarEnabled,
+                    onCheckedChange = { viewModel.setMetricsBarEnabled(it) }
+                )
+            }
+        }
+
+        // Metrics Bar Position
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Положение полоски метрик",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Кнопка "Снизу"
+                    FilterChip(
+                        selected = metricsBarPosition == "bottom",
+                        onClick = { viewModel.setMetricsBarPosition("bottom") },
+                        label = { Text("Снизу") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Кнопка "Сверху"
+                    FilterChip(
+                        selected = metricsBarPosition == "top",
+                        onClick = { viewModel.setMetricsBarPosition("top") },
+                        label = { Text("Сверху") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Text(
+                    when (metricsBarPosition) {
+                        "bottom" -> "Полоска отображается внизу экрана"
+                        "top" -> "Полоска отображается вверху экрана"
+                        else -> "Положение по умолчанию"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -1710,52 +572,6 @@ fun SettingsTab(viewModel: SettingsViewModel) {
                         else
                             MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ConsoleTab(viewModel: ConsoleViewModel) {
-    // Реактивное получение логов из ViewModel
-    val lines by viewModel.consoleLogs.collectAsState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            "Консоль",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-
-        ElevatedCard(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF1E1E1E))
-                    .padding(12.dp)
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    reverseLayout = false
-                ) {
-                    itemsIndexed(lines) { _, line ->
-                        Text(
-                            text = line,
-                            color = Color(0xFFE0E0E0),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
-                    }
                 }
             }
         }

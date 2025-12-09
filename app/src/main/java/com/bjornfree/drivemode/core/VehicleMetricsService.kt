@@ -176,7 +176,6 @@ class VehicleMetricsService : Service() {
             }
         } catch (e: Exception) {
             DriveModeService.logConsole("VehicleMetricsService: ошибка инициализации: ${e.message}")
-            Log.e(TAG, "Error initializing CarPropertyManager", e)
         }
     }
 
