@@ -1,8 +1,5 @@
 package com.bjornfree.drivemode.ui.theme
 
-import android.graphics.Rect
-import android.graphics.Typeface
-
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
@@ -15,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.SweepGradient
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -34,9 +32,7 @@ class BorderOverlayController(private val appContext: Context) {
     private var borderView: BorderView? = null
     private var animator: ValueAnimator? = null
 
-    // Цвета подсветки по режимам
-    // ОПТИМИЗАЦИЯ: Прямые integer значения вместо Color.parseColor()
-    // Избегаем парсинг строк и создание Color объектов при инициализации
+    // Цвета подсветки по режимам (без Color.parseColor)
     private val modeColors: Map<String, Int> = mapOf(
         "eco" to 0xFF00E676.toInt(),        // яркий зелёный (neon eco)
         "comfort" to 0xFF00B0FF.toInt(),    // насыщенный голубой
@@ -46,9 +42,16 @@ class BorderOverlayController(private val appContext: Context) {
 
     /**
      * Показать рамку для указанного режима.
-     * Рамка пульсирует 2.5 секунды и автоматически скрывается.
+     * Рамка пульсирует и автоматически скрывается.
      */
     fun showMode(mode: String) {
+        // без разрешения на оверлеи даже не пробуем добавлять view
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !Settings.canDrawOverlays(appContext)
+        ) {
+            return
+        }
+
         ensureAttached()
 
         val v = borderView ?: return
@@ -60,15 +63,13 @@ class BorderOverlayController(private val appContext: Context) {
         // Останавливаем предыдущую анимацию, если была
         animator?.cancel()
 
-        // Начальное состояние анимации
+        // Начальное состояние
         v.setIntensity(0f)
         container?.visibility = View.VISIBLE
 
-        // Одинаковая скорость анимации для всех режимов
         val durationMs = 2600L
 
-        // Анимируем прогресс [0f..1f], а в самой BorderView
-        // интерпретируем его по-разному в зависимости от режима.
+        // Анимируем прогресс [0f..1f], внутри BorderView используется для фазы
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = durationMs
             repeatCount = ValueAnimator.INFINITE
@@ -80,7 +81,7 @@ class BorderOverlayController(private val appContext: Context) {
             start()
         }
 
-        // Авто-скрытие через 3.5 секунды
+        // Авто-скрытие
         v.removeCallbacks(autoHideRunnable)
         v.postDelayed(autoHideRunnable, 3500L)
     }
@@ -99,6 +100,9 @@ class BorderOverlayController(private val appContext: Context) {
      * Полное уничтожение оверлея. Вызывать из onDestroy сервиса.
      */
     fun destroy() {
+        // снимаем отложенный autoHide
+        borderView?.removeCallbacks(autoHideRunnable)
+
         hide()
         container?.let {
             try {
@@ -118,6 +122,12 @@ class BorderOverlayController(private val appContext: Context) {
     private fun ensureAttached() {
         val existing = container
         if (existing != null && existing.windowToken != null) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !Settings.canDrawOverlays(appContext)
+        ) {
+            return
+        }
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -153,7 +163,11 @@ class BorderOverlayController(private val appContext: Context) {
             )
         )
 
-        wm.addView(root, lp)
+        try {
+            wm.addView(root, lp)
+        } catch (_: Throwable) {
+            return
+        }
 
         container = root
         borderView = view
@@ -162,161 +176,61 @@ class BorderOverlayController(private val appContext: Context) {
 
 /**
  * View, рисующая рамку по периметру экрана.
- * Интенсивность управляет альфой и толщиной линии.
+ * Интенсивность управляет включением/выключением анимации.
  */
 private class BorderView(context: Context) : View(context) {
 
     private var intensity: Float = 0f
     private var mode: String = "eco"
 
-    // Флаг активности анимации и момент старта
     private var isActive: Boolean = false
     private var startTimeMs: Long = SystemClock.elapsedRealtime()
 
     private var color: Int = Color.WHITE
 
-    fun setMode(m: String) {
-        mode = m
-        // При смене режима перезапускаем отсчёт фазы
-        startTimeMs = SystemClock.elapsedRealtime()
-        invalidate()
-    }
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-    }
-
-    // Дополнительная кисть для лёгкого свечения вокруг рамки
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-    }
-
-    // Базовая толщина линии в dp (делаем более аккуратной)
-    private val baseStrokePx: Float = 6f * resources.displayMetrics.density
-
-    // Радиус скругления углов рамки в dp
+    // Радиус скругления внутренних углов "трубы"
     private val cornerRadiusPx: Float = 24f * resources.displayMetrics.density
 
-    // Прямоугольник, внутри которого рисуем рамку
-    private val rect = RectF()
-
-    // Толщина стенок "сосуда" (dp)
-    private val wallThicknessPx: Float = 6f * resources.displayMetrics.density
-
-    // Толщина "трубы" с жидкостью (ширина полосы по периметру)
+    // Толщина "трубы" по периметру
     private val tubeWidthPx: Float = 36f * resources.displayMetrics.density
 
-    // Внутренний прямоугольник для "жидкости"
+    private val rect = RectF()
     private val innerRect = RectF()
-
-    // Путь "кольца-трубы" по периметру
     private val ringPath = Path()
 
-    // Центр экрана — для градиента по кругу
     private var centerX: Float = 0f
     private var centerY: Float = 0f
 
-    // Матрица для анимации градиента
     private val shaderMatrix = Matrix()
-
-    // Кисть для жидкостей (заливка внутри рамки)
     private val liquidPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
-    // Кисть для блика (имитация стекла)
-    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-    }
+    // Кэш градиента, чтобы не пересоздавать на каждом кадре
+    private var shader: SweepGradient? = null
+    private var shaderBaseColor: Int = Color.WHITE
+    private var shaderMode: String = "eco"
+    private var shaderWidth: Int = 0
+    private var shaderHeight: Int = 0
 
-    // Плотность экрана
-    private val density: Float = resources.displayMetrics.density
-
-    // Кисти и вспомогательные объекты для текста режима
-    private val labelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // Яркий контрастный текст поверх "жидкости"
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-
-        // Более "автомобильный" шрифт: узкий, жирный
-        // (sans-serif-condensed обычно есть на всех Android)
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-
-        // Лёгкое увеличение межбуквенного интервала, чтобы надпись читалась чище
-        letterSpacing = 0.08f
-
-        // Едва заметная тень для читаемости на ярком фоне трубы
-        setShadowLayer(
-            3f,   // радиус
-            0f,   // смещение по X
-            2f,   // смещение по Y
-            Color.argb(160, 0, 0, 0) // полупрозрачный чёрный
-        )
-    }
-
-    private val labelBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-
-    private var labelTextSizePx: Float = 0f
-    private val labelTextBounds = Rect()
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if (w <= 0 || h <= 0) return
-
-        centerX = w.toFloat() / 2f
-        centerY = h.toFloat() / 2f
-
-        // Хотим "прилипание" к краям экрана — без внешних отступов
-        val margin = 0f
-
-        // Внешний прямоугольник чуть отступаем от краёв
-        rect.set(
-            margin,
-            margin,
-            w.toFloat() - margin,
-            h.toFloat() - margin
-        )
-
-        // Внутренний прямоугольник — внутренняя стенка "трубы"
-        innerRect.set(
-            rect.left + tubeWidthPx,
-            rect.top + tubeWidthPx,
-            rect.right - tubeWidthPx,
-            rect.bottom - tubeWidthPx
-        )
-
-        // Строим путь "кольца" с вырезанным центром
-        ringPath.reset()
-        // Внешний прямоугольник без скругления — острые углы у самого края экрана
-        ringPath.addRect(
-            rect,
-            Path.Direction.CW
-        )
-        // Внутренний прямоугольник со скруглением — мягкие внутренние углы "трубы"
-        ringPath.addRoundRect(
-            innerRect,
-            cornerRadiusPx,
-            cornerRadiusPx,
-            Path.Direction.CCW
-        )
-        ringPath.fillType = Path.FillType.EVEN_ODD
-
-        // Подбираем размер шрифта под экран (чтобы надпись была читабельной, но не мешала контенту)
-        val minSide = minOf(w, h).toFloat()
-        labelTextSizePx = (minSide / 30f).coerceAtLeast(14f * resources.displayMetrics.scaledDensity)
-        labelTextPaint.textSize = labelTextSizePx
+    fun setMode(m: String) {
+        if (mode == m) return
+        mode = m
+        startTimeMs = SystemClock.elapsedRealtime()
+        // пересоздаём градиент при следующей отрисовке
+        shader = null
+        invalidate()
     }
 
     fun setColor(c: Int) {
+        if (color == c) return
         color = c
+        shader = null
         invalidate()
     }
 
     fun setIntensity(value: Float) {
         intensity = value.coerceIn(0f, 1f)
-        // intensity > 0f означает, что анимация должна идти
         if (intensity > 0f) {
             if (!isActive) {
                 isActive = true
@@ -328,30 +242,112 @@ private class BorderView(context: Context) : View(context) {
         invalidate()
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w <= 0 || h <= 0) return
+
+        centerX = w.toFloat() / 2f
+        centerY = h.toFloat() / 2f
+
+        val margin = 0f
+
+        rect.set(
+            margin,
+            margin,
+            w.toFloat() - margin,
+            h.toFloat() - margin
+        )
+
+        innerRect.set(
+            rect.left + tubeWidthPx,
+            rect.top + tubeWidthPx,
+            rect.right - tubeWidthPx,
+            rect.bottom - tubeWidthPx
+        )
+
+        ringPath.reset()
+        ringPath.addRect(rect, Path.Direction.CW)
+        ringPath.addRoundRect(
+            innerRect,
+            cornerRadiusPx,
+            cornerRadiusPx,
+            Path.Direction.CCW
+        )
+        ringPath.fillType = Path.FillType.EVEN_ODD
+
+        shaderWidth = 0
+        shaderHeight = 0
+        shader = null
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
         if (!isActive || intensity <= 0f) return
 
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+
+        ensureShader(w, h)
 
         val baseColor = color
 
         fun argb(a: Int, c: Int): Int = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
 
-        // Единая интенсивность для всех режимов, разная цветовая схема для adaptive
+        val elapsedSec = (SystemClock.elapsedRealtime() - startTimeMs) / 1000f
+
+        // Базовая скорость вращения по режимам (градусов в секунду)
+        val baseSpeed = when (mode) {
+            "eco" -> 200f
+            "comfort" -> 200f
+            "sport" -> 200f
+            // adaptive: скорость меняется по синусу, эффект "живее"
+            "adaptive" -> {
+                val omega = (2.0 * Math.PI / 2.0).toFloat() // период ≈ 2 c
+                val k = kotlin.math.sin(omega * elapsedSec).toFloat() // [-1..1]
+                100f * k
+            }
+            else -> 500f
+        }
+
+        val angle = (elapsedSec * baseSpeed) % 360f
+
+        shaderMatrix.reset()
+        shaderMatrix.postRotate(angle, centerX, centerY)
+        shader?.setLocalMatrix(shaderMatrix)
+
+        liquidPaint.shader = shader
+        liquidPaint.alpha = 220
+
+        canvas.drawPath(ringPath, liquidPaint)
+    }
+
+    private fun ensureShader(w: Int, h: Int) {
+        if (shader != null &&
+            shaderBaseColor == color &&
+            shaderMode == mode &&
+            shaderWidth == w &&
+            shaderHeight == h
+        ) {
+            return
+        }
+
+        shaderBaseColor = color
+        shaderMode = mode
+        shaderWidth = w
+        shaderHeight = h
+
+        fun argb(a: Int, c: Int): Int =
+            Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
+
         val alpha = 220
         val dimAlpha = (alpha * 0.3f).toInt()
 
-        val bright = argb(alpha, baseColor)
-        val dim = argb(dimAlpha, baseColor)
+        val bright = argb(alpha, color)
+        val dim = argb(dimAlpha, color)
 
-        // Выбираем схему градиента:
-        // - для adaptive — разноцветные сегменты (красный, зелёный, голубой),
-        // - для остальных — один цвет с яркими и тусклыми участками.
-        val shader: SweepGradient = if (mode == "adaptive") {
+        shader = if (mode == "adaptive") {
             val redBright = Color.argb(alpha, 255, 80, 80)
             val greenBright = Color.argb(alpha, 80, 255, 140)
             val blueBright = Color.argb(alpha, 80, 180, 255)
@@ -370,7 +366,7 @@ private class BorderView(context: Context) : View(context) {
                     redDim
                 ),
                 floatArrayOf(
-                    0f,   0.08f, 0.16f,
+                    0f, 0.08f, 0.16f,
                     0.33f, 0.41f, 0.49f,
                     0.66f, 0.74f, 0.82f,
                     1f
@@ -381,12 +377,12 @@ private class BorderView(context: Context) : View(context) {
                 centerX,
                 centerY,
                 intArrayOf(
-                    dim,      // начало сегмента
-                    bright,   // яркая часть
-                    dim,      // переход
-                    dim,      // спокойная часть
-                    bright,   // ещё одно яркое пятно
-                    dim       // замыкание круга
+                    dim,
+                    bright,
+                    dim,
+                    dim,
+                    bright,
+                    dim
                 ),
                 floatArrayOf(
                     0f,
@@ -398,36 +394,5 @@ private class BorderView(context: Context) : View(context) {
                 )
             )
         }
-
-        // Поворачиваем градиент в зависимости от прошедшего времени:
-        // создаёт эффект непрерывного "перетекания" без рывков от перезапуска анимации.
-        val elapsedSec = (SystemClock.elapsedRealtime() - startTimeMs) / 1000f
-
-        // Базовая скорость вращения по режимам (градусов в секунду)
-        val baseSpeed = when (mode) {
-            "eco" -> 200f
-            "comfort" -> 200f
-            "sport" -> 200f
-            // adaptive: плавно меняем скорость от ~400 до ~800 за цикл ~2 c
-            "adaptive" -> {
-                val omega = (2.0 * Math.PI / 2.0).toFloat() // период ≈ 2 c
-                val k = kotlin.math.sin(omega * elapsedSec).toFloat() // [-1..1]
-                100f  * k // [400..800]
-            }
-            else -> 500f
-        }
-
-        val angle = (elapsedSec * baseSpeed) % 360f
-
-        shaderMatrix.reset()
-        shaderMatrix.postRotate(angle, centerX, centerY)
-        shader.setLocalMatrix(shaderMatrix)
-
-        liquidPaint.shader = shader
-        liquidPaint.alpha = alpha
-
-        // Рисуем только кольцо-трубу, центр остаётся полностью прозрачным
-        canvas.drawPath(ringPath, liquidPaint)
-
     }
 }

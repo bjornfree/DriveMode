@@ -9,18 +9,22 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Repository для работы с метриками автомобиля.
+ * Централизованный репозиторий для метрик автомобиля.
  *
- * - Централизует чтение свойств автомобиля
- * - Предоставляет реактивный StateFlow поверх polling
- * - Использует CarPropertyManagerSingleton
+ * - Все чтения свойств идут через CarPropertyManagerSingleton
+ * - Быстрые метрики (скорость/RPM/передача) приходят через callbacks от CarPropertyManager
+ * - Остальные свойства читаются периодическим polling с уменьшенной нагрузкой
+ * - Отдаёт единый StateFlow<VehicleMetrics> для всего приложения
  */
 class VehicleMetricsRepository(
     private val carManager: CarPropertyManagerSingleton
 ) {
     companion object {
-        // Интервал опроса
-        private const val UPDATE_INTERVAL_MS = 2000L
+        // Интервал опроса "медленных" свойств
+        private const val UPDATE_INTERVAL_MS = 1000L
+
+        // Частота обновления быстрых метрик через callback (Гц)
+        private const val FAST_PROPERTIES_RATE_HZ = 5f
 
         // areaId’ы, которые реально работают на этой платформе
         private val SUPPORTED_AVG_FUEL_AREAS = intArrayOf(1, 2)
@@ -48,6 +52,22 @@ class VehicleMetricsRepository(
     private var isTripMileageSupported = true
     private var isTripTimeSupported = true
 
+    // --------- быстрые метрики через callback (скорость / RPM / передача) ---------
+
+    @Volatile
+    private var latestSpeed: Float? = null
+
+    @Volatile
+    private var latestRPM: Int? = null
+
+    @Volatile
+    private var latestGear: String? = null
+
+    // токены callback’ов для отписки
+    private var speedCallbackToken: Any? = null
+    private var rpmCallbackToken: Any? = null
+    private var gearCallbackToken: Any? = null
+
     /**
      * Запускает мониторинг метрик автомобиля.
      * Thread-safe start.
@@ -56,6 +76,9 @@ class VehicleMetricsRepository(
     fun startMonitoring() {
         if (isMonitoring) return
         isMonitoring = true
+
+        // Регистрируем callbacks для быстрых свойств
+        registerFastPropertyCallbacks()
 
         monitorJob = scope.launch {
             while (isActive && isMonitoring) {
@@ -66,10 +89,10 @@ class VehicleMetricsRepository(
                     val avgFuel = readAverageFuel()
 
                     val metrics = previous.copy(
-                        // быстрые метрики
-                        speed = readSpeed() ?: previous.speed,
-                        rpm = readRPM() ?: previous.rpm,
-                        gear = readGear() ?: previous.gear,
+                        // быстрые метрики — из callback’ов, с fallback на прямое чтение
+                        speed = latestSpeed ?: readSpeed() ?: previous.speed,
+                        rpm = latestRPM ?: readRPM() ?: previous.rpm,
+                        gear = latestGear ?: readGear() ?: previous.gear,
 
                         // температуры
                         cabinTemperature = readCabinTemperature(),
@@ -89,14 +112,6 @@ class VehicleMetricsRepository(
 
                         // шины
                         tirePressure = readTirePressureData(),
-
-                        // батарея и другое
-                        batteryLevel = readBatteryLevel(),
-                        pm25Status = readPM25Status(),
-                        nightMode = readNightMode(),
-
-                        serviceDaysRemaining = readServiceDaysRemaining(),
-                        serviceDistanceRemainingKm = readServiceDistanceRemainingKm()
                     )
 
                     if (metrics != lastEmittedMetrics) {
@@ -122,6 +137,55 @@ class VehicleMetricsRepository(
         monitorJob?.cancel()
         monitorJob = null
         lastEmittedMetrics = null
+
+        unregisterFastPropertyCallbacks()
+    }
+
+    // ========================================
+    // Регистрация быстрых колбэков
+    // ========================================
+
+    private fun registerFastPropertyCallbacks() {
+        // Скорость (км/ч)
+        speedCallbackToken = carManager.registerPropertyCallback(
+            propertyId = VehiclePropertyConstants.VEHICLE_SPEED,
+            rate = FAST_PROPERTIES_RATE_HZ,
+            callback = { propId, value ->
+                if (propId != VehiclePropertyConstants.VEHICLE_SPEED) return@registerPropertyCallback
+                val v = (value as? Float) ?: (value as? Number)?.toFloat()
+                latestSpeed = v
+            }
+        )
+
+        // Обороты двигателя (RPM, raw / 4)
+        rpmCallbackToken = carManager.registerPropertyCallback(
+            propertyId = VehiclePropertyConstants.ENGINE_RPM,
+            rate = FAST_PROPERTIES_RATE_HZ,
+            callback = { propId, value ->
+                if (propId != VehiclePropertyConstants.ENGINE_RPM) return@registerPropertyCallback
+                val raw = (value as? Int) ?: (value as? Number)?.toInt()
+                latestRPM = raw?.div(4)
+            })
+
+        // Передача
+        gearCallbackToken = carManager.registerPropertyCallback(
+            propertyId = VehiclePropertyConstants.GEAR_SELECTION,
+            rate = FAST_PROPERTIES_RATE_HZ,
+            callback = { propId, value ->
+                if (propId != VehiclePropertyConstants.GEAR_SELECTION) return@registerPropertyCallback
+                val code = (value as? Int) ?: (value as? Number)?.toInt()
+                latestGear = code?.let { VehiclePropertyConstants.gearToString(it) }
+            })
+    }
+
+    private fun unregisterFastPropertyCallbacks() {
+        carManager.unregisterPropertyCallback(speedCallbackToken)
+        carManager.unregisterPropertyCallback(rpmCallbackToken)
+        carManager.unregisterPropertyCallback(gearCallbackToken)
+
+        speedCallbackToken = null
+        rpmCallbackToken = null
+        gearCallbackToken = null
     }
 
     // ========================================
@@ -161,14 +225,14 @@ class VehicleMetricsRepository(
     }
 
     /**
-     * Скорость автомобиля (км/ч).
+     * Скорость автомобиля (км/ч) — резервный путь, если callback ещё не дал значение.
      */
     private fun readSpeed(): Float? {
         return carManager.readFloatProperty(VehiclePropertyConstants.VEHICLE_SPEED)
     }
 
     /**
-     * Обороты двигателя (RPM), формула raw / 4.
+     * Обороты двигателя (RPM), формула raw / 4 — резервный путь.
      */
     private fun readRPM(): Int? {
         val raw = carManager.readIntProperty(VehiclePropertyConstants.ENGINE_RPM, 2) ?: return null
@@ -176,7 +240,7 @@ class VehicleMetricsRepository(
     }
 
     /**
-     * Текущая передача.
+     * Текущая передача — резервный путь.
      */
     private fun readGear(): String? {
         val gearCode =
@@ -278,61 +342,6 @@ class VehicleMetricsRepository(
         }
     }
 
-    /**
-     * Уровень батареи 12В (%).
-     */
-    private fun readBatteryLevel(): Int? {
-        return carManager.readIntProperty(VehiclePropertyConstants.BATTERY_LEVEL)
-    }
-
-    /**
-     * Качество воздуха PM2.5.
-     */
-    private fun readPM25Status(): Int? {
-        return carManager.readIntProperty(VehiclePropertyConstants.PM25_STATUS)
-    }
-
-    /**
-     * Ночной режим.
-     */
-    private fun readNightMode(): Boolean {
-        val value = carManager.readIntProperty(VehiclePropertyConstants.NIGHT_MODE)
-        return value == 1
-    }
-
-    /**
-     * Остаток до ТО по времени (дни), AP_TIME_REMAINING: 0x2140301c.
-     */
-    private fun readServiceDaysRemaining(): Int? {
-        return try {
-            for (areaId in SUPPORTED_SERVICE_AREAS) {
-                val value = carManager.readIntProperty(0x2140301c, areaId)
-                if (value != null && value > 0) {
-                    return value
-                }
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    /**
-     * Остаток до ТО по пробегу (км), AP_TOTAL_MIL_REMAINING: 0x2140301b.
-     */
-    private fun readServiceDistanceRemainingKm(): Int? {
-        return try {
-            for (areaId in SUPPORTED_SERVICE_AREAS) {
-                val value = carManager.readIntProperty(0x2140301b, areaId)
-                if (value != null && value > 0) {
-                    return value
-                }
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
 
     /**
      * Данные о топливе на основе rangeKm и averageFuel.

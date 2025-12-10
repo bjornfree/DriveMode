@@ -5,28 +5,34 @@
     tools:ignore="Deprecated">
 
     <!-- Сервис, автозапуск, оверлей, логи -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"
         tools:ignore="ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
         tools:targetApi="34" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Чтение системных логов: требует root/priv-app/Shizuku -->
     <uses-permission
         android:name="android.permission.READ_LOGS"
         tools:ignore="ProtectedPermissions" />
 
     <!-- Запись файлов (дамп свойств, логи) -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <!-- Для Android 11+ (API 30+) полный доступ к хранилищу -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 
     <!-- Car-related permissions from com.android.car.Manifest.permission -->
@@ -95,24 +101,11 @@
             </intent-filter>
         </activity>
 
-        <!-- ForegroundService, который слушает машину и управляет оверлеем (новая версия) -->
+        <!-- Единый foreground-сервис для режима вождения, метрик и оверлеев -->
         <service
             android:name=".core.DriveModeService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync" />
-
-        <service
-            android:name=".core.AutoSeatHeatService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync">
-        </service>
-
-        <!-- Сервис мониторинга параметров автомобиля (real-time) -->
-        <service
-            android:name=".core.VehicleMetricsService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync">
-        </service>
 
         <!-- Автозапуск сервиса после перезагрузки ГУ -->
         <receiver
@@ -126,15 +119,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- Ресивер для приёма тестовых/боевых триггеров режима -->
-        <!-- exported=true для возможности тестирования через ADB, защищено signature permission -->
-
-        <!-- Автоматический перезапуск сервиса при падении -->
-        <receiver
-            android:name=".core.RestartReceiver"
-            android:enabled="true"
-            android:exported="false">
-        </receiver>
+        <!-- RestartReceiver и дополнительные сервисы AutoSeatHeatService/VehicleMetricsService
+             убраны из манифеста для исключения дублирующих запусков и потоков. -->
 
     </application>
 

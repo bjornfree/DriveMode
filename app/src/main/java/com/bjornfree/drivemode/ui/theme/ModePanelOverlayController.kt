@@ -61,6 +61,9 @@ class ModePanelOverlayController(
 
     private var autoCollapseRunnable: Runnable? = null
 
+    // кэш последнего режима, чтобы не дергать анимации/отрисовку при одинаковых значениях
+    private var lastModeKey: String? = null
+
     private val modeColors: Map<String, Int> = mapOf(
         "eco" to 0xFF4CAF50.toInt(),
         "comfort" to 0xFF2196F3.toInt(),
@@ -104,11 +107,28 @@ class ModePanelOverlayController(
 
     fun showMode(mode: String) {
         if (!overlayEnabled) return
-        ensureAttached()
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !Settings.canDrawOverlays(appContext)
+        ) {
+            return
+        }
+
+        ensureAttached()
         container?.visibility = View.VISIBLE
 
         val modeLower = mode.lowercase()
+
+        // если режим не поменялся и панель уже видна — не трогаем UI, только переустанавливаем автоскрытие
+        if (lastModeKey == modeLower && panelRoot != null && container?.visibility == View.VISIBLE) {
+            val root = panelRoot ?: return
+            autoCollapseRunnable?.let { root.removeCallbacks(it) }
+            autoCollapseRunnable = Runnable { collapsePanel() }
+            root.postDelayed(autoCollapseRunnable!!, 200L)
+            return
+        }
+        lastModeKey = modeLower
+
         val baseColor = modeColors[modeLower] ?: PANEL_STROKE_COLOR_DEFAULT
 
         val letter = when (modeLower) {
@@ -195,6 +215,7 @@ class ModePanelOverlayController(
             root?.removeCallbacks(runnable)
         }
         autoCollapseRunnable = null
+        lastModeKey = null
 
         val c = container
 
@@ -520,6 +541,9 @@ class DrivingStatusOverlayController(
     private var textColor: Int = COLOR_TEXT_DARK_PRIMARY
     private var textSecondaryColor: Int = COLOR_TEXT_DARK_SECONDARY
 
+    // кэш последнего отрисованного состояния, чтобы не дергать UI без изменений
+    private var lastState: DrivingStatusOverlayState? = null
+
     init {
         currentInstance?.destroy()
         currentInstance = this
@@ -589,6 +613,13 @@ class DrivingStatusOverlayController(
             return
         }
 
+        // если состояние не изменилось — не обновляем UI, чтобы не триггерить лишние layout/measure
+        val previous = lastState
+        if (previous != null && previous == state) {
+            return
+        }
+        lastState = state
+
         val modeText = state.modeTitle?.takeIf { it.isNotBlank() } ?: "—"
         tvMode?.text = modeText
         tvMode?.setTextColor(getModeColor(state.modeTitle))
@@ -614,6 +645,7 @@ class DrivingStatusOverlayController(
         tvTemps = null
         tvTires = null
         attached = false
+        lastState = null
 
         if (c != null) {
             try {

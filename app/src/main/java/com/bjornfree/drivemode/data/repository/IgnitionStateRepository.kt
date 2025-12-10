@@ -4,7 +4,6 @@ import com.bjornfree.drivemode.data.car.CarPropertyManagerSingleton
 import com.bjornfree.drivemode.data.constants.VehiclePropertyConstants
 import com.bjornfree.drivemode.data.preferences.PreferencesManager
 import com.bjornfree.drivemode.domain.model.IgnitionState
-import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,110 +11,75 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Repository для мониторинга состояния зажигания.
  *
- * КОНСОЛИДАЦИЯ:
- * - Заменяет дублированную логику мониторинга зажигания из сервисов
- * - Единый source of truth для состояния зажигания
- * - Автоматическое сохранение истории состояний
- *
- * @param carManager singleton для чтения свойств
- * @param prefsManager для сохранения истории
+ * FULL REWORK:
+ *  - удалён опрос (while + delay)
+ *  - используется callback от CarPropertyManagerSingleton
+ *  - нет лишних потоков, нет polling, нет задержек
+ *  - state обновляется мгновенно и без нагрузки на CPU
  */
 class IgnitionStateRepository(
     private val carManager: CarPropertyManagerSingleton,
     private val prefsManager: PreferencesManager
 ) {
-    companion object {
-        private const val POLL_INTERVAL_MS = 2500L  // Опрос каждые 2.5 секунды
-    }
 
-    // Реактивный state
     private val _ignitionState = MutableStateFlow(IgnitionState.UNKNOWN)
     val ignitionState: StateFlow<IgnitionState> = _ignitionState.asStateFlow()
 
-    // Coroutine scope
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var monitorJob: Job? = null
-
-    @Volatile
+    private var callbackToken: Any? = null
     private var isMonitoring = false
 
-    /**
-     * Запускает мониторинг состояния зажигания.
-     * Thread-safe start с синхронизацией для предотвращения дублирующих запусков.
-     */
     @Synchronized
     fun startMonitoring() {
         if (isMonitoring) return
         isMonitoring = true
 
-        // Загружаем последнее известное состояние из preferences
+        // восстановить последнее известное состояние
         val lastState = prefsManager.lastIgnitionState
         if (lastState != -1) {
             _ignitionState.value = IgnitionState.fromRaw(lastState)
         }
 
-        monitorJob = scope.launch {
-            while (isActive && isMonitoring) {
-                try {
-                    val rawState = readIgnitionState()
-
-                    if (rawState != null) {
-                        val newState = IgnitionState.fromRaw(rawState)
-                        val previousState = _ignitionState.value
-
-                        // Обновляем только при реальном изменении состояния
-                        if (newState.rawState != previousState.rawState) {
-                            // Сохраняем в preferences
-                            prefsManager.saveIgnitionState(rawState, newState.isOff)
-                            // Обновляем state
-                            _ignitionState.value = newState
-                        }
-                    }
-                } catch (_: Exception) {
-                    // Ошибки чтения просто игнорируются до следующего опроса
-                }
-
-                delay(POLL_INTERVAL_MS)
-            }
-        }
-    }
-
-    /**
-     * Останавливает мониторинг.
-     */
-    fun stopMonitoring() {
-        isMonitoring = false
-        monitorJob?.cancel()
-        monitorJob = null
-    }
-
-    /**
-     * Читает сырое состояние зажигания.
-     * @return raw ignition state или null при ошибке
-     */
-    private fun readIgnitionState(): Int? {
-        return carManager.readIntProperty(
+        // начальное чтение реального состояния с машины
+        carManager.readIntProperty(
             VehiclePropertyConstants.VEHICLE_PROPERTY_IGNITION_STATE
+        )?.let { rawInt ->
+            val newState = IgnitionState.fromRaw(rawInt)
+            prefsManager.saveIgnitionState(rawInt, newState.isOff)
+            _ignitionState.value = newState
+        }
+
+        // регистрация колбэка
+        callbackToken = carManager.registerPropertyCallback(
+            propertyId = VehiclePropertyConstants.VEHICLE_PROPERTY_IGNITION_STATE,
+            rate = 4f, // обновления по мере прихода событий
+            callback = { _, raw ->
+                val rawInt = (raw as? Int) ?: return@registerPropertyCallback
+                val newState = IgnitionState.fromRaw(rawInt)
+                val prevState = _ignitionState.value
+
+                if (newState.rawState != prevState.rawState) {
+                    prefsManager.saveIgnitionState(rawInt, newState.isOff)
+                    _ignitionState.value = newState
+                }
+            }
         )
     }
 
-    /**
-     * Получает текущее состояние синхронно.
-     * @return текущее IgnitionState
-     */
+    fun stopMonitoring() {
+        if (!isMonitoring) return
+        isMonitoring = false
+
+        callbackToken?.let { token ->
+            carManager.unregisterPropertyCallback(token)
+        }
+        callbackToken = null
+    }
+
     fun getCurrentState(): IgnitionState = _ignitionState.value
 
-    /**
-     * Проверяет был ли "свежий старт".
-     * @return true если зажигание было выключено достаточно долго
-     */
     fun isFreshStart(): Boolean = prefsManager.isFreshStart()
 
-    /**
-     * Освобождает ресурсы.
-     */
     fun release() {
         stopMonitoring()
-        scope.cancel()
     }
 }

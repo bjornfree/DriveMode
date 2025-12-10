@@ -32,7 +32,6 @@ class CarPropertyManagerSingleton(private val context: Context) {
     private var carClass: Class<*>? = null
     private var managerClass: Class<*>? = null
 
-    // Кэш для CarPropertyValue
     private var carPropertyValueClass: Class<*>? = null
     private var cpvGetPropertyIdMethod: Method? = null
     private var cpvGetValueMethod: Method? = null
@@ -47,7 +46,7 @@ class CarPropertyManagerSingleton(private val context: Context) {
             carClass = carCls
 
             val createCarMethod = carCls.getMethod("createCar", Context::class.java)
-            val car = createCarMethod.invoke(null, context)
+            val car = createCarMethod.invoke(null, context.applicationContext)
             carInstance = car
 
             try {
@@ -98,6 +97,12 @@ class CarPropertyManagerSingleton(private val context: Context) {
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType
             )
+            methodCache["setIntProperty"] = mgrClass.getMethod(
+                "setIntProperty",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType
+            )
         } catch (_: Exception) {
         }
     }
@@ -108,6 +113,16 @@ class CarPropertyManagerSingleton(private val context: Context) {
             mgrClass.getMethod(methodName, *parameterTypes)
         }
     }
+
+    private fun ensureInitialized(): Boolean {
+        if (carApiUnavailable) return false
+        if (isInitialized && managerInstance != null) return true
+        return initialize()
+    }
+
+    // -------------------
+    // Чтение свойств
+    // -------------------
 
     fun readIntProperty(propertyId: Int, areaId: Int = 0): Int? {
         if (!ensureInitialized()) return null
@@ -141,50 +156,30 @@ class CarPropertyManagerSingleton(private val context: Context) {
         }
     }
 
-    private fun ensureInitialized(): Boolean {
-        if (carApiUnavailable) return false
-        if (isInitialized && managerInstance != null) return true
-        return initialize()
-    }
+    // -------------------
+    // Запись свойств
+    // -------------------
 
-    fun isCarApiAvailable(): Boolean {
-        return !carApiUnavailable && isInitialized
-    }
+    fun writeIntProperty(propertyId: Int, areaId: Int = 0, value: Int): Boolean {
+        if (!ensureInitialized()) return false
 
-    fun getManagerInstance(): Any? {
-        ensureInitialized()
-        return managerInstance
-    }
-
-    fun getCarInstance(): Any? {
-        ensureInitialized()
-        return carInstance
-    }
-
-    @Synchronized
-    fun release() {
-        try {
-            val car = carInstance
-            val cls = carClass
-            if (car != null && cls != null) {
-                try {
-                    val disconnectMethod = cls.getMethod("disconnect")
-                    disconnectMethod.invoke(car)
-                } catch (_: Exception) {
-                }
-            }
-        } finally {
-            carInstance = null
-            managerInstance = null
-            isInitialized = false
-            methodCache.clear()
-            carPropertyValueClass = null
-            cpvGetPropertyIdMethod = null
-            cpvGetValueMethod = null
+        return try {
+            val method = getCachedMethod(
+                "setIntProperty",
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!
+            ) ?: return false
+            method.invoke(managerInstance, propertyId, areaId, value)
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
-    fun isReady(): Boolean = isInitialized && managerInstance != null
+    // -------------------
+    // Подписки
+    // -------------------
 
     fun registerPropertyCallback(
         propertyId: Int,
@@ -196,10 +191,8 @@ class CarPropertyManagerSingleton(private val context: Context) {
         return try {
             if (carPropertyValueClass == null) {
                 carPropertyValueClass = Class.forName(CLASS_CAR_PROPERTY_VALUE)
-                cpvGetPropertyIdMethod =
-                    carPropertyValueClass?.getMethod("getPropertyId")
-                cpvGetValueMethod =
-                    carPropertyValueClass?.getMethod("getValue")
+                cpvGetPropertyIdMethod = carPropertyValueClass?.getMethod("getPropertyId")
+                cpvGetValueMethod = carPropertyValueClass?.getMethod("getValue")
             }
 
             val callbackClass = Class.forName(
@@ -219,7 +212,8 @@ class CarPropertyManagerSingleton(private val context: Context) {
                             cls.isInstance(value)
                         ) {
                             try {
-                                val propId = idMethod.invoke(value) as? Int ?: return@newProxyInstance null
+                                val propId = idMethod.invoke(value) as? Int
+                                    ?: return@newProxyInstance null
                                 val propValue = valMethod.invoke(value)
                                 callback(propId, propValue)
                             } catch (_: Exception) {
@@ -227,6 +221,7 @@ class CarPropertyManagerSingleton(private val context: Context) {
                         }
                         null
                     }
+
                     "onErrorEvent" -> null
                     else -> null
                 }
@@ -260,6 +255,49 @@ class CarPropertyManagerSingleton(private val context: Context) {
 
             unregisterMethod.invoke(managerInstance, callbackInstance)
         } catch (_: Exception) {
+        }
+    }
+
+    // -------------------
+    // Жизненный цикл
+    // -------------------
+
+    fun isCarApiAvailable(): Boolean {
+        return !carApiUnavailable && isInitialized
+    }
+
+    fun isReady(): Boolean = isInitialized && managerInstance != null
+
+    fun getManagerInstance(): Any? {
+        ensureInitialized()
+        return managerInstance
+    }
+
+    fun getCarInstance(): Any? {
+        ensureInitialized()
+        return carInstance
+    }
+
+    @Synchronized
+    fun release() {
+        try {
+            val car = carInstance
+            val cls = carClass
+            if (car != null && cls != null) {
+                try {
+                    val disconnectMethod = cls.getMethod("disconnect")
+                    disconnectMethod.invoke(car)
+                } catch (_: Exception) {
+                }
+            }
+        } finally {
+            carInstance = null
+            managerInstance = null
+            isInitialized = false
+            methodCache.clear()
+            carPropertyValueClass = null
+            cpvGetPropertyIdMethod = null
+            cpvGetValueMethod = null
         }
     }
 }

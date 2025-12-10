@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,7 +33,9 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
     val cabinTemp by viewModel.cabinTemperature.collectAsState()
     val ambientTemp by viewModel.ambientTemperature.collectAsState()
 
-    val availableModes = viewModel.getAvailableModes()
+    // список режимов не меняется динамически — кэшируем, чтобы не создавать список на каждый ре-композ
+    val availableModes = remember { viewModel.getAvailableModes() }
+
     val scrollState = rememberScrollState()
 
     Column(

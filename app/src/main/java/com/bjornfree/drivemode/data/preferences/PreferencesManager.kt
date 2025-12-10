@@ -2,20 +2,18 @@ package com.bjornfree.drivemode.data.preferences
 
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 
 /**
  * Централизованный менеджер для работы с SharedPreferences.
  *
- * Заменяет множественные вызовы getSharedPreferences() по всему проекту
- * на единый type-safe интерфейс с properties.
- *
- * Улучшения:
- * - Type safety (не нужно помнить строковые ключи)
  * - Единое место для всех настроек
+ * - Type-safe properties
  * - Автоматический apply()
  * - Кэширование SharedPreferences instance
- *
- * @param context Application context
+ * - Дополнительно: Flow-обёртки для реактивных настроек
  */
 class PreferencesManager(context: Context) {
 
@@ -94,7 +92,7 @@ class PreferencesManager(context: Context) {
     /**
      * Проверять температуру только один раз при запуске двигателя.
      * Если true - подогрев включается/выключается только при включении зажигания.
-     * Если false - постоянный мониторинг температуры (может включаться/выключаться во время поездки).
+     * Если false - постоянный мониторинг температуры.
      */
     var checkTempOnceOnStartup: Boolean
         get() = prefs.getBoolean(KEY_CHECK_TEMP_ONCE_ON_STARTUP, false)
@@ -208,7 +206,7 @@ class PreferencesManager(context: Context) {
      * По умолчанию true - отображается всегда.
      */
     var metricsBarEnabled: Boolean
-        get() = prefs.getBoolean(KEY_METRICS_BAR_ENABLED, true)
+        get() = prefs.getBoolean(KEY_METRICS_BAR_ENABLED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_METRICS_BAR_ENABLED, value).apply()
         }
@@ -266,10 +264,8 @@ class PreferencesManager(context: Context) {
         val lastOff = lastIgnitionOffTimestamp
 
         return if (lastOff == 0L) {
-            // Никогда не записывали - считаем fresh start
             true
         } else {
-            // Проверяем прошло ли достаточно времени
             (now - lastOff) > freshStartWindowMs
         }
     }
@@ -288,4 +284,81 @@ class PreferencesManager(context: Context) {
             lastIgnitionOffTimestamp = now
         }
     }
+
+    // ========================================
+    // Flow-обёртки для "живых" настроек
+    // ========================================
+
+    /**
+     * Базовый helper для Flow по одному ключу.
+     */
+    private fun <T> preferenceFlow(key: String, getter: () -> T): Flow<T> = callbackFlow {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+            if (changedKey == null || changedKey == key) {
+                trySend(getter())
+            }
+        }
+
+        trySend(getter())
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
+     * Flow для режима темы приложения.
+     */
+    fun themeModeFlow(): Flow<String> =
+        preferenceFlow(KEY_THEME_MODE) { themeMode }
+
+    /**
+     * Flow для флага отображения полоски метрик.
+     */
+    fun metricsBarEnabledFlow(): Flow<Boolean> =
+        preferenceFlow(KEY_METRICS_BAR_ENABLED) { metricsBarEnabled }
+
+    /**
+     * Flow для позиции полоски метрик.
+     */
+    fun metricsBarPositionFlow(): Flow<String> =
+        preferenceFlow(KEY_METRICS_BAR_POSITION) { metricsBarPosition }
+
+    /**
+     * Flow для overlay-настроек (border/panel).
+     * Можно использовать, если захочется реактивно включать/выключать бордер/панель.
+     */
+    data class OverlayPrefs(
+        val borderEnabled: Boolean,
+        val panelEnabled: Boolean
+    )
+
+    fun overlayPrefsFlow(): Flow<OverlayPrefs> =
+        callbackFlow {
+            val emitCurrent = {
+                trySend(
+                    OverlayPrefs(
+                        borderEnabled = borderEnabled,
+                        panelEnabled = panelEnabled
+                    )
+                )
+            }
+
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+                if (changedKey == null ||
+                    changedKey == KEY_BORDER_ENABLED ||
+                    changedKey == KEY_PANEL_ENABLED
+                ) {
+                    emitCurrent()
+                }
+            }
+
+            emitCurrent()
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+
+            awaitClose {
+                prefs.unregisterOnSharedPreferenceChangeListener(listener)
+            }
+        }
 }

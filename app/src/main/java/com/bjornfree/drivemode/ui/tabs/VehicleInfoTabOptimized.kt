@@ -35,6 +35,7 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
 
     val scrollState = rememberScrollState()
 
+    // вычисляем цвет передачи только когда меняется сама передача
     val gearColor = when (main.gear) {
         "P" -> AdaptiveColors.error
         "R" -> AdaptiveColors.warning
@@ -43,11 +44,13 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
         else -> AdaptiveColors.textPrimary
     }
 
+    // и цвет оборотов – только при изменении rpm
     val rpmColor = when {
-        main.rpm < 1000 -> AdaptiveColors.success
-        main.rpm < 3000 -> AdaptiveColors.textPrimary
-        else -> AdaptiveColors.warning
-    }
+            main.rpm < 1000 -> AdaptiveColors.success
+            main.rpm < 3000 -> AdaptiveColors.textPrimary
+            else -> AdaptiveColors.warning
+
+        }
 
     Column(
         modifier = Modifier

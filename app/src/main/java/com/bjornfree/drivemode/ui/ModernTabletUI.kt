@@ -1,64 +1,34 @@
 package com.bjornfree.drivemode.ui
 
-import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
-import androidx.compose.animation.*
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.PI
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.bjornfree.drivemode.R
-import com.bjornfree.drivemode.core.AutoSeatHeatService
 import com.bjornfree.drivemode.core.DriveModeService
-import com.bjornfree.drivemode.core.VehicleMetricsService
-import com.bjornfree.drivemode.domain.model.TireData
 import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
 import com.bjornfree.drivemode.ui.tabs.AutoHeatingTabOptimized
 import com.bjornfree.drivemode.ui.tabs.DiagnosticsTabOptimized
-import com.bjornfree.drivemode.domain.model.TirePressureData
 import com.bjornfree.drivemode.presentation.viewmodel.*
 import org.koin.androidx.compose.koinViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Современный UI для планшета 14" с Material Design 3.
@@ -68,7 +38,6 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ModernTabletUI() {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     // Inject ViewModels через Koin
     val vehicleInfoViewModel: VehicleInfoViewModel = koinViewModel()
@@ -83,7 +52,6 @@ fun ModernTabletUI() {
         TabItem("Бортовой ПК", Icons.Default.Star),      // Информация об авто
         TabItem("Автоподогрев", Icons.Default.Favorite), // Настройки подогрева
         TabItem("Диагностика", Icons.Default.Build),
-        TabItem("Консоль", Icons.Default.List),
         TabItem("Настройки", Icons.Default.Settings)
     )
 
@@ -143,7 +111,7 @@ fun ModernTabletUI() {
                     0 -> VehicleInfoTabOptimized(viewModel = vehicleInfoViewModel)
                     1 -> AutoHeatingTabOptimized(viewModel = autoHeatingViewModel)
                     2 -> DiagnosticsTabOptimized(viewModel = diagnosticsViewModel)
-                    4 -> SettingsTab(viewModel = settingsViewModel)
+                    3 -> SettingsTab(viewModel = settingsViewModel)
                 }
             }
         }
@@ -210,19 +178,19 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
 
-    // Локальные состояния для разрешений (проверяются периодически)
+    // Локальные состояния для разрешений/статуса
     var overlayGranted by remember { mutableStateOf(viewModel.hasSystemAlertWindowPermission()) }
     var batteryOptimized by remember { mutableStateOf(!viewModel.isBatteryOptimizationIgnored()) }
-    var serviceRunning by remember { mutableStateOf(false) }
+    var serviceRunning by remember { mutableStateOf(DriveModeService.isRunning) }
 
-    // Проверяем разрешения периодически
-    // ОПТИМИЗАЦИЯ: Увеличен интервал проверки для снижения нагрузки
+    // ОПТИМИЗАЦИЯ:
+    //  - разрешения читаем один раз при входе на экран (они редко меняются);
+    //  - в цикле периодически обновляем только статус сервиса (дешёвый флаг),
+    //    без тяжёлых системных проверок.
     LaunchedEffect(Unit) {
         while (true) {
-            overlayGranted = viewModel.hasSystemAlertWindowPermission()
-            batteryOptimized = !viewModel.isBatteryOptimizationIgnored()
             serviceRunning = DriveModeService.isRunning
-            delay(500) // Проверка каждые 5 секунд (вместо 2000ms)
+            delay(2000L)
         }
     }
 

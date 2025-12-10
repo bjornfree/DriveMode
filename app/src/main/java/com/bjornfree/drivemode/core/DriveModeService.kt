@@ -16,13 +16,23 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import com.bjornfree.drivemode.data.car.CarPropertyManagerSingleton
+import com.bjornfree.drivemode.data.preferences.PreferencesManager
+import com.bjornfree.drivemode.data.repository.HeatingControlRepository
 import com.bjornfree.drivemode.data.repository.IgnitionStateRepository
+import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
+import com.bjornfree.drivemode.domain.model.HeatingState
 import com.bjornfree.drivemode.ui.theme.BorderOverlayController
 import com.bjornfree.drivemode.ui.theme.ModePanelOverlayController
-import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayController
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayState
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
 class DriveModeService : Service(), DriveModeListener {
@@ -74,9 +84,15 @@ class DriveModeService : Service(), DriveModeListener {
         }
     }
 
+    // --- DI ---
+
     private val ignitionRepo: IgnitionStateRepository by inject()
     private val vehicleMetricsRepo: VehicleMetricsRepository by inject()
-    private val prefsManager: com.bjornfree.drivemode.data.preferences.PreferencesManager by inject()
+    private val heatingRepo: HeatingControlRepository by inject()
+    private val carManager: CarPropertyManagerSingleton by inject()
+    private val prefsManager: PreferencesManager by inject()
+
+    // --- Scope / overlays / jobs ---
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var borderOverlay: BorderOverlayController
@@ -84,9 +100,11 @@ class DriveModeService : Service(), DriveModeListener {
     private lateinit var drivingStatusOverlay: DrivingStatusOverlayController
 
     private var statusOverlayJob: Job? = null
-    private var themeMonitorJob: Job? = null
-    private var overlaySettingsMonitorJob: Job? = null
+    private var uiMonitorJob: Job? = null
     private var ignitionStateJob: Job? = null
+    private var heatingJob: Job? = null
+
+    // --- Drive mode ---
 
     private var lastShownMode: String? = null
     private var lastShownAt: Long = 0L
@@ -95,6 +113,16 @@ class DriveModeService : Service(), DriveModeListener {
     private lateinit var driveModeManager: DriveModeManager
 
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // --- Автоподогрев сидений ---
+
+    private val VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE = 356517131
+    private val AREA_DRIVER = 1
+    private val AREA_PASSENGER = 4
+
+    private val manualLevelOverride = mutableMapOf<Int, Int?>()
+    private val manualDisabledAreas = mutableSetOf<Int>()
+    private val lastSetLevels = mutableMapOf<Int, Int>()
 
     override fun onCreate() {
         super.onCreate()
@@ -129,6 +157,7 @@ class DriveModeService : Service(), DriveModeListener {
         modePanelOverlayController = ModePanelOverlayController(applicationContext)
         drivingStatusOverlay = DrivingStatusOverlayController(applicationContext)
 
+        // начальная инициализация полосы
         drivingStatusOverlay.setEnabled(prefsManager.metricsBarEnabled)
         drivingStatusOverlay.setPosition(prefsManager.metricsBarPosition)
 
@@ -141,19 +170,33 @@ class DriveModeService : Service(), DriveModeListener {
             drivingStatusOverlay.setEnabled(false)
         }
 
+        // Старт централизованного мониторинга метрик
         vehicleMetricsRepo.startMonitoring()
 
+        // Подключение к режимам движения
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 driveModeManager = DriveModeManager(applicationContext, this)
                 driveModeManager.connect()
             } catch (_: Exception) {
             }
-        }, 1000L)
+        }, 3000L)
 
-        themeMonitorJob = scope.launch {
-            while (isActive) {
-                val isDark = when (prefsManager.themeMode) {
+        // Реактивный монитор настроек темы и полосы метрик
+        uiMonitorJob = scope.launch {
+            var lastIsDark: Boolean? = null
+            var lastMetricsBarEnabled: Boolean? = null
+            var lastMetricsBarPosition: String? = null
+
+            combine(
+                prefsManager.themeModeFlow(),
+                prefsManager.metricsBarEnabledFlow(),
+                prefsManager.metricsBarPositionFlow()
+            ) { themeMode, metricsEnabled, metricsPos ->
+                Triple(themeMode, metricsEnabled, metricsPos)
+            }.collect { (themeMode, metricsEnabled, metricsPos) ->
+                // Тема (как было)
+                val isDarkNow = when (themeMode) {
                     "dark" -> true
                     "light" -> false
                     else -> {
@@ -162,68 +205,33 @@ class DriveModeService : Service(), DriveModeListener {
                                 android.content.res.Configuration.UI_MODE_NIGHT_YES
                     }
                 }
-                drivingStatusOverlay.setDarkTheme(isDark)
-                delay(1000)
-            }
-        }
-
-        overlaySettingsMonitorJob = scope.launch {
-            var lastMetricsBarEnabled = prefsManager.metricsBarEnabled
-            var lastMetricsBarPosition = prefsManager.metricsBarPosition
-            var lastHasOverlayPermission = Settings.canDrawOverlays(applicationContext)
-
-            drivingStatusOverlay.setEnabled(lastMetricsBarEnabled)
-
-            while (isActive) {
-                delay(500)
-
-                val hasOverlayPermission = Settings.canDrawOverlays(applicationContext)
-                val currentMetricsBarEnabled = prefsManager.metricsBarEnabled
-                val currentMetricsBarPosition = prefsManager.metricsBarPosition
-
-                if (currentMetricsBarEnabled != lastMetricsBarEnabled) {
-                    drivingStatusOverlay.setEnabled(currentMetricsBarEnabled)
-
-                    if (currentMetricsBarEnabled && hasOverlayPermission) {
-                        try {
-                            drivingStatusOverlay.ensureVisible()
-                        } catch (_: Exception) {
-                        }
-                    }
-
-                    lastMetricsBarEnabled = currentMetricsBarEnabled
+                if (isDarkNow != lastIsDark) {
+                    drivingStatusOverlay.setDarkTheme(isDarkNow)
+                    lastIsDark = isDarkNow
                 }
 
-                if (hasOverlayPermission != lastHasOverlayPermission) {
-                    if (hasOverlayPermission && currentMetricsBarEnabled) {
-                        try {
-                            drivingStatusOverlay.ensureVisible()
-                            drivingStatusOverlay.setPosition(currentMetricsBarPosition)
-                        } catch (_: Exception) {
-                        }
-                    } else if (!hasOverlayPermission) {
-                        try {
-                            drivingStatusOverlay.destroy()
-                        } catch (_: Exception) {
-                        }
-                    }
-                    lastHasOverlayPermission = hasOverlayPermission
-                }
-
-                if (currentMetricsBarPosition != lastMetricsBarPosition &&
-                    currentMetricsBarEnabled && hasOverlayPermission
-                ) {
-                    try {
-                        drivingStatusOverlay.destroy()
-                        drivingStatusOverlay.setPosition(currentMetricsBarPosition)
+                // Включение / выключение полоски
+                if (metricsEnabled != lastMetricsBarEnabled) {
+                    drivingStatusOverlay.setEnabled(metricsEnabled)
+                    if (metricsEnabled) {
                         drivingStatusOverlay.ensureVisible()
-                    } catch (_: Exception) {
+                    } else {
+                        drivingStatusOverlay.destroy()
                     }
-                    lastMetricsBarPosition = currentMetricsBarPosition
+                    lastMetricsBarEnabled = metricsEnabled
+                }
+
+                // Смена позиции
+                if (metricsPos != lastMetricsBarPosition && metricsEnabled) {
+                    drivingStatusOverlay.destroy()
+                    drivingStatusOverlay.setPosition(metricsPos)
+                    drivingStatusOverlay.ensureVisible()
+                    lastMetricsBarPosition = metricsPos
                 }
             }
         }
 
+        // Обновление статусной полосы
         statusOverlayJob = scope.launch {
             vehicleMetricsRepo.vehicleMetrics.collect { m ->
                 val tire = m.tirePressure
@@ -255,6 +263,18 @@ class DriveModeService : Service(), DriveModeListener {
             }
         }
 
+        // Запуск автоподогрева в core-сервисе
+        heatingRepo.startAutoHeating()
+        heatingJob = scope.launch(Dispatchers.IO) {
+            heatingRepo.heatingState.collect { state ->
+                if (state.isActive) {
+                    activateSeatHeating(state)
+                } else {
+                    deactivateSeatHeating(state)
+                }
+            }
+        }
+
         ensureOverlayPermissionTip()
         ensureKeepAliveWhitelist()
     }
@@ -270,6 +290,11 @@ class DriveModeService : Service(), DriveModeListener {
                             onDriveModeDetected(driveMode)
                         }
                     }
+                } else {
+                    // При выключении зажигания сбрасываем ручные вмешательства в подогрев
+                    manualLevelOverride.clear()
+                    manualDisabledAreas.clear()
+                    lastSetLevels.clear()
                 }
             }
         }
@@ -291,19 +316,17 @@ class DriveModeService : Service(), DriveModeListener {
         return START_STICKY
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        val restartIntent = Intent(applicationContext, DriveModeService::class.java)
-        applicationContext.startForegroundService(restartIntent)
-    }
-
     override fun onDestroy() {
         ignitionStateJob?.cancel()
         statusOverlayJob?.cancel()
-        themeMonitorJob?.cancel()
-        overlaySettingsMonitorJob?.cancel()
+        uiMonitorJob?.cancel()
+        heatingJob?.cancel()
 
         vehicleMetricsRepo.stopMonitoring()
+        try {
+            heatingRepo.stopAutoHeating()
+        } catch (_: Exception) {
+        }
 
         try {
             if (wakeLock?.isHeld == true) {
@@ -339,18 +362,11 @@ class DriveModeService : Service(), DriveModeListener {
             drivingStatusOverlay.destroy()
         } catch (_: Exception) {
         }
-
-        val prefs = getSharedPreferences("drivemode_prefs", Context.MODE_PRIVATE)
-        val autoStart = prefs.getBoolean("autostart_on_boot", true)
-        if (autoStart) {
-            try {
-                sendBroadcast(Intent(this, RestartReceiver::class.java))
-            } catch (_: Exception) {
-            }
-        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // --------- Режим вождения ---------
 
     private fun onDriveModeDetected(mode: DriveMode) {
         val key = mode.key
@@ -379,6 +395,11 @@ class DriveModeService : Service(), DriveModeListener {
             }
         } catch (_: Exception) {
         }
+
+        try {
+            updateNotification(key)
+        } catch (_: Exception) {
+        }
     }
 
     private fun onModeDetected(mode: String) {
@@ -389,6 +410,106 @@ class DriveModeService : Service(), DriveModeListener {
     override fun onDriveModeChanged(mode: String) {
         onModeDetected(mode)
     }
+
+    // --------- Автоподогрев сидений ---------
+
+    private fun activateSeatHeating(state: HeatingState) {
+        if (!carManager.isCarApiAvailable()) return
+
+        val hvacLevel = if (state.adaptiveHeating) {
+            val temp = state.currentTemp
+            when {
+                temp == null -> 2
+                temp <= 0f -> 3
+                temp < 5f -> 2
+                temp < 10f -> 1
+                else -> 0
+            }
+        } else {
+            state.heatingLevel
+        }
+
+        val activeAreas = when (state.mode.key) {
+            "driver" -> listOf(AREA_DRIVER)
+            "passenger" -> listOf(AREA_PASSENGER)
+            "both" -> listOf(AREA_DRIVER, AREA_PASSENGER)
+            else -> emptyList()
+        }
+        if (activeAreas.isEmpty()) return
+
+        val allSeatAreas = listOf(AREA_DRIVER, AREA_PASSENGER)
+
+        if (!state.adaptiveHeating) {
+            for (area in allSeatAreas) {
+                val currentLevel = getCurrentHeatingLevel(area)
+                val expectedLevel = lastSetLevels[area]
+                if (currentLevel != null && expectedLevel != null && currentLevel != expectedLevel) {
+                    if (currentLevel == 0 && expectedLevel > 0) {
+                        manualDisabledAreas.add(area)
+                    } else if (currentLevel > 0) {
+                        manualLevelOverride[area] = currentLevel
+                    }
+                }
+            }
+        }
+
+        for (area in allSeatAreas) {
+            if (manualDisabledAreas.contains(area)) continue
+
+            val finalLevel = if (activeAreas.contains(area)) {
+                if (!state.adaptiveHeating && manualLevelOverride.containsKey(area)) {
+                    manualLevelOverride[area] ?: hvacLevel
+                } else {
+                    hvacLevel
+                }
+            } else {
+                0
+            }
+
+            carManager.writeIntProperty(
+                propertyId = VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
+                areaId = area,
+                value = finalLevel
+            )
+            lastSetLevels[area] = finalLevel
+        }
+    }
+
+    private fun deactivateSeatHeating(state: HeatingState) {
+        if (!carManager.isCarApiAvailable()) return
+
+        if (state.turnedOffByTimer) {
+            manualLevelOverride.clear()
+            manualDisabledAreas.clear()
+        }
+
+        val areas = when (state.mode.key) {
+            "driver" -> listOf(AREA_DRIVER)
+            "passenger" -> listOf(AREA_PASSENGER)
+            "both" -> listOf(AREA_DRIVER, AREA_PASSENGER)
+            else -> listOf(AREA_DRIVER, AREA_PASSENGER)
+        }
+
+        for (area in areas) {
+            if (manualDisabledAreas.contains(area)) continue
+
+            carManager.writeIntProperty(
+                propertyId = VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
+                areaId = area,
+                value = 0
+            )
+            lastSetLevels[area] = 0
+        }
+    }
+
+    private fun getCurrentHeatingLevel(area: Int): Int? {
+        return carManager.readIntProperty(
+            propertyId = VEHICLE_PROPERTY_HVAC_SEAT_TEMPERATURE,
+            areaId = area
+        )
+    }
+
+    // --------- Notification / keep-alive ---------
 
     private fun buildNotification(): Notification {
         val chId = "drive_mode_service"
@@ -405,9 +526,32 @@ class DriveModeService : Service(), DriveModeListener {
             .build()
     }
 
+    private fun updateNotification(mode: String) {
+        val chId = "drive_mode_service"
+        val text = "Режим: ${mode.uppercase()}"
+        val n = NotificationCompat.Builder(this, chId)
+            .setContentTitle("DriveMode: сервис активен")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(true)
+            .build()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    1,
+                    n,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(1, n)
+            }
+        } catch (_: Exception) {
+        }
+    }
 
     private fun ensureOverlayPermissionTip() {
-        // оставлено как расширяемая точка, сейчас без логики
+        // расширяемая точка, сейчас без логики
     }
 
     private fun ensureKeepAliveWhitelist() {
