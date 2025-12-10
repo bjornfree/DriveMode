@@ -8,7 +8,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,17 +21,6 @@ import androidx.compose.ui.unit.dp
 import com.bjornfree.drivemode.ui.theme.AdaptiveColors
 import com.bjornfree.drivemode.ui.theme.AppTheme
 
-/**
- * Премиальные компоненты для оптимизированного UI
- * - Минималистичный дизайн
- * - Переиспользуемые элементы
- * - Оптимизированный рендеринг
- */
-
-/**
- * Премиальная карточка (адаптивная для светлой/темной темы)
- * BMW стиль: на светлой теме - белая с тенью, на темной - темная с легкой тенью
- */
 @Composable
 fun PremiumCard(
     modifier: Modifier = Modifier,
@@ -47,7 +38,7 @@ fun PremiumCard(
         ),
         shape = RoundedCornerShape(AppTheme.Sizes.CardCornerRadius),
         elevation = CardDefaults.cardElevation(
-            defaultElevation = if (isDark) 2.dp else 4.dp  // Больше тени на светлой теме
+            defaultElevation = if (isDark) 2.dp else 4.dp
         )
     ) {
         Column(
@@ -57,16 +48,12 @@ fun PremiumCard(
     }
 }
 
-/**
- * Карточка с градиентом для акцентов (адаптивная для светлой/темной темы)
- * BMW стиль: темно-серый градиент на темной, светло-серый с синей обводкой на светлой
- */
 @Composable
 fun GradientCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val isDark = isSystemInDarkTheme()
 
     Box(
         modifier = modifier
@@ -74,17 +61,15 @@ fun GradientCard(
             .clip(RoundedCornerShape(AppTheme.Sizes.CardCornerRadius))
             .then(
                 if (isDark) {
-                    // Темная тема: темно-серый градиент (для контраста с белым текстом)
                     Modifier.background(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
-                                Color(0xFF1A1F2E),  // Темно-серый
-                                Color(0xFF252B3D)   // Чуть светлее темно-серый
+                                Color(0xFF1A1F2E),
+                                Color(0xFF252B3D)
                             )
                         )
                     )
                 } else {
-                    // Светлая тема: белый фон с синей обводкой
                     Modifier
                         .background(Color.White)
                         .border(
@@ -102,11 +87,6 @@ fun GradientCard(
     }
 }
 
-/**
- * Метрика с большим числом (скорость, обороты, температура)
- * Оптимизирована: использует remember для избежания recomposition
- * BMW стиль: всегда белый/яркий текст для лучшей читаемости
- */
 @Composable
 fun MetricDisplay(
     value: String,
@@ -122,7 +102,6 @@ fun MetricDisplay(
         Row(
             verticalAlignment = Alignment.Bottom
         ) {
-            // Большое число - всегда яркое для читаемости
             Text(
                 text = value,
                 fontSize = AppTheme.Typography.DisplayMedium.first,
@@ -133,7 +112,6 @@ fun MetricDisplay(
             if (unit.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // Единица измерения рядом с значением
                 Text(
                     text = unit,
                     fontSize = AppTheme.Typography.BodyLarge.first,
@@ -145,7 +123,6 @@ fun MetricDisplay(
 
         Spacer(modifier = Modifier.height(AppTheme.Spacing.Small))
 
-        // Метка - увеличенный размер для читаемости
         Text(
             text = label,
             fontSize = AppTheme.Typography.BodyMedium.first,
@@ -155,10 +132,6 @@ fun MetricDisplay(
     }
 }
 
-/**
- * Компактная метрика для мелких показаний
- * Улучшенная читаемость: увеличенный размер шрифта и вес
- */
 @Composable
 fun CompactMetric(
     label: String,
@@ -195,52 +168,6 @@ fun CompactMetric(
     }
 }
 
-/**
- * Премиальная кнопка с градиентом
- */
-@Composable
-fun PremiumButton(
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
-    Box(
-        modifier = modifier
-            .height(AppTheme.Sizes.ButtonHeight)
-            .clip(RoundedCornerShape(AppTheme.Sizes.ButtonCornerRadius))
-            .background(
-                if (enabled) {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            AppTheme.Colors.Primary,
-                            AppTheme.Colors.PrimaryDark
-                        )
-                    )
-                } else {
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            AdaptiveColors.textDisabled,
-                            AdaptiveColors.textDisabled
-                        )
-                    )
-                }
-            )
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            fontSize = AppTheme.Typography.LabelLarge.first,
-            fontWeight = AppTheme.Typography.LabelLarge.second,
-            color = Color.White
-        )
-    }
-}
-
-/**
- * Премиальный переключатель (Switch)
- */
 @Composable
 fun PremiumSwitch(
     checked: Boolean,
@@ -286,9 +213,6 @@ fun PremiumSwitch(
     }
 }
 
-/**
- * Премиальный слайдер
- */
 @Composable
 fun PremiumSlider(
     value: Float,
@@ -334,9 +258,6 @@ fun PremiumSlider(
     }
 }
 
-/**
- * Индикатор состояния (активен/неактивен)
- */
 @Composable
 fun StatusIndicator(
     isActive: Boolean,
@@ -344,9 +265,8 @@ fun StatusIndicator(
     inactiveText: String,
     modifier: Modifier = Modifier
 ) {
-    // Анимированное пульсирование для активного состояния
     val infiniteTransition = rememberInfiniteTransition(label = "status_pulse")
-    val alpha by infiniteTransition.animateFloat(
+    val animatedAlpha by infiniteTransition.animateFloat(
         initialValue = 0.5f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -355,6 +275,7 @@ fun StatusIndicator(
         ),
         label = "alpha"
     )
+    val dotAlpha = if (isActive) animatedAlpha else 1f
 
     Row(
         modifier = modifier
@@ -363,17 +284,19 @@ fun StatusIndicator(
                 if (isActive) AppTheme.Colors.Success.copy(alpha = 0.2f)
                 else AppTheme.Colors.TextDisabled.copy(alpha = 0.2f)
             )
-            .padding(horizontal = AppTheme.Spacing.Medium, vertical = AppTheme.Spacing.Small),
+            .padding(
+                horizontal = AppTheme.Spacing.Medium,
+                vertical = AppTheme.Spacing.Small
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Small)
     ) {
-        // Индикатор точка
         Box(
             modifier = Modifier
                 .size(8.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(
-                    if (isActive) AppTheme.Colors.Success.copy(alpha = if (isActive) alpha else 1f)
+                    if (isActive) AppTheme.Colors.Success.copy(alpha = dotAlpha)
                     else AppTheme.Colors.TextDisabled
                 )
         )
@@ -387,9 +310,6 @@ fun StatusIndicator(
     }
 }
 
-/**
- * Разделитель (адаптивный для светлой/темной темы)
- */
 @Composable
 fun PremiumDivider(modifier: Modifier = Modifier) {
     HorizontalDivider(
@@ -399,9 +319,6 @@ fun PremiumDivider(modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * Секция с заголовком
- */
 @Composable
 fun Section(
     title: String,
@@ -430,10 +347,6 @@ fun Section(
     }
 }
 
-/**
- * Информационная строка (ключ: значение)
- * Улучшенная читаемость: увеличенный размер шрифта и контраст
- */
 @Composable
 fun InfoRow(
     label: String,

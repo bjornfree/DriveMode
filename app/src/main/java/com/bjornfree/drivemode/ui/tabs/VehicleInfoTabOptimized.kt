@@ -1,30 +1,30 @@
 package com.bjornfree.drivemode.ui.tabs
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.runtime.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.bjornfree.drivemode.R
 import com.bjornfree.drivemode.domain.model.TireData
+import com.bjornfree.drivemode.domain.model.TirePressureData
 import com.bjornfree.drivemode.presentation.viewmodel.VehicleInfoViewModel
 import com.bjornfree.drivemode.ui.components.*
 import com.bjornfree.drivemode.ui.theme.AdaptiveColors
 import com.bjornfree.drivemode.ui.theme.AppTheme
 
-/**
- * Оптимизированный VehicleInfoTab
- *
- * ОПТИМИЗАЦИИ:
- * - Использует remember и derivedStateOf для избежания recomposition
- * - Переиспользуемые компоненты вместо дублирования кода
- * - Упрощенная структура Layout (меньше вложенности)
- * - Четкое разделение на секции
- *
- * СОКРАЩЕНИЕ: 300 строк → ~150 строк (50%)
- */
 @Composable
 fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
     val main by viewModel.mainMetrics.collectAsState()
@@ -33,7 +33,8 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
     val tires by viewModel.tireMetrics.collectAsState()
     val temps by viewModel.temperatureMetrics.collectAsState()
 
-    // Вычисляем цвета для индикаторов
+    val scrollState = rememberScrollState()
+
     val gearColor = when (main.gear) {
         "P" -> AdaptiveColors.error
         "R" -> AdaptiveColors.warning
@@ -51,23 +52,21 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(AppTheme.Spacing.Medium),
         verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
     ) {
-        // ============ ГЛАВНЫЕ МЕТРИКИ - КРУПНЫЕ КАРТОЧКИ ============
         // Ряд 1: Передача, Скорость, Обороты
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
         ) {
-            // Передача
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
                     .height(180.dp)
             ) {
-                androidx.compose.foundation.layout.Box(
+                Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
@@ -80,13 +79,12 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
                 }
             }
 
-            // Скорость
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
                     .height(180.dp)
             ) {
-                androidx.compose.foundation.layout.Box(
+                Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
@@ -99,13 +97,12 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
                 }
             }
 
-            // Обороты
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
                     .height(180.dp)
             ) {
-                androidx.compose.foundation.layout.Box(
+                Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
@@ -119,12 +116,11 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
             }
         }
 
-        // ============ ТОПЛИВО И ШИНЫ ============
+        // Топливо + Шины
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
         ) {
-            // Топливо
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
@@ -137,7 +133,6 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
                 )
             }
 
-            // Давление в шинах
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
@@ -147,12 +142,11 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
             }
         }
 
-        // ============ ТЕМПЕРАТУРА - КРУПНЫЕ КАРТОЧКИ ============
+        // Температуры
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
         ) {
-            // Температура в салоне
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
@@ -165,7 +159,6 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
                 )
             }
 
-            // Температура снаружи
             PremiumCard(
                 modifier = Modifier
                     .weight(1f)
@@ -179,8 +172,7 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
             }
         }
 
-
-        // ============ РАСХОД И ПРОБЕГ ============
+        // Расход и пробег
         Section(title = "Расход и пробег") {
             PremiumCard {
                 Column(verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Small)) {
@@ -193,7 +185,8 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
 
                     InfoRow(
                         label = "Запас хода",
-                        value = (fuel.fuel?.rangeKm ?: fuel.rangeRemaining)?.let { "%.0f км".format(it) } ?: "—"
+                        value = (fuel.fuel?.rangeKm ?: fuel.rangeRemaining)
+                            ?.let { "%.0f км".format(it) } ?: "—"
                     )
 
                     PremiumDivider()
@@ -222,9 +215,6 @@ fun VehicleInfoTabOptimized(viewModel: VehicleInfoViewModel) {
     }
 }
 
-/**
- * Карточка температуры как крупная метрика
- */
 @Composable
 private fun TemperatureCard(
     label: String,
@@ -238,7 +228,7 @@ private fun TemperatureCard(
         else -> AdaptiveColors.warning
     }
 
-    androidx.compose.foundation.layout.Box(
+    Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
@@ -251,9 +241,6 @@ private fun TemperatureCard(
     }
 }
 
-/**
- * Оптимизированный индикатор топлива
- */
 @Composable
 private fun FuelGaugeOptimized(
     fuelLiters: Float?,
@@ -264,9 +251,14 @@ private fun FuelGaugeOptimized(
         verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Small),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Процент топлива
         val percentage = remember(fuelLiters, tankCapacity) {
-            fuelLiters?.let { ((it / tankCapacity) * 100).toInt().coerceIn(0, 100) } ?: 0
+            if (fuelLiters != null && tankCapacity > 0f) {
+                ((fuelLiters / tankCapacity) * 100)
+                    .toInt()
+                    .coerceIn(0, 100)
+            } else {
+                0
+            }
         }
 
         MetricDisplay(
@@ -294,44 +286,28 @@ private fun FuelGaugeOptimized(
     }
 }
 
-/**
- * Оптимизированное отображение давления в шинах
- * Показывает визуальную схему автомобиля с 4 колесами
- * Машина отображается всегда, даже если нет данных о давлении
- */
 @Composable
-private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.model.TirePressureData?) {
-    val carPainter = androidx.compose.ui.res.painterResource(com.bjornfree.drivemode.R.drawable.car)
+private fun TirePressureOptimized(tirePressure: TirePressureData?) {
+    val carPainter = painterResource(R.drawable.car)
+
     Column(
         verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Small),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Заголовок
-        androidx.compose.material3.Text(
-            text = "",
-            fontSize = AppTheme.Typography.HeadlineSmall.first,
-            fontWeight = AppTheme.Typography.HeadlineSmall.second,
-            color = AdaptiveColors.textPrimary
-        )
-
-        // Визуальная схема автомобиля сверху с колесами (всегда видна)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(220.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Изображение автомобиля (вид сверху) - всегда видно
-            androidx.compose.foundation.Image(
+            Image(
                 painter = carPainter,
                 contentDescription = "Автомобиль",
-                modifier = Modifier
-                    .fillMaxWidth(0.9f),
-                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth(0.9f),
+                contentScale = ContentScale.Fit,
                 alpha = 0.3f
             )
 
-            // Значения давления для каждого колеса (или пустые если нет данных)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -339,7 +315,6 @@ private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.m
                 verticalArrangement = Arrangement.SpaceBetween,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Передние колеса
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
@@ -348,7 +323,6 @@ private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.m
                     TireBadge(tirePressure?.frontRight, "FR")
                 }
 
-                // Задние колеса
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
@@ -361,46 +335,50 @@ private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.m
     }
 }
 
-/**
- * Бэдж с давлением в шине
- */
 @Composable
 private fun TireBadge(tireData: TireData?, label: String) {
     val pressure = tireData?.pressure
     val temperature = tireData?.temperature
+
+    val bgColor = when {
+        tireData == null || pressure == null -> AdaptiveColors.textDisabled.copy(alpha = 0.3f)
+        pressure < 200 -> AdaptiveColors.error.copy(alpha = 0.3f)
+        pressure > 280 -> AdaptiveColors.warning.copy(alpha = 0.3f)
+        else -> AdaptiveColors.success.copy(alpha = 0.3f)
+    }
+
+    val pressureColor = when {
+        tireData == null || pressure == null -> AdaptiveColors.textDisabled
+        pressure < 200 -> AdaptiveColors.error
+        pressure > 280 -> AdaptiveColors.warning
+        else -> AdaptiveColors.success
+    }
+
     Column(
         modifier = Modifier
             .background(
-                color = when {
-                    tireData == null || pressure == null -> AdaptiveColors.textDisabled.copy(alpha = 0.3f)
-                    pressure < 200 -> AdaptiveColors.error.copy(alpha = 0.3f)
-                    pressure > 280 -> AdaptiveColors.warning.copy(alpha = 0.3f)
-                    else -> AdaptiveColors.success.copy(alpha = 0.3f)
-                },
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                color = bgColor,
+                shape = RoundedCornerShape(8.dp)
             )
             .padding(AppTheme.Spacing.Small),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        androidx.compose.material3.Text(
+        Text(
             text = label,
             fontSize = AppTheme.Typography.LabelSmall.first,
             fontWeight = AppTheme.Typography.LabelSmall.second,
             color = AdaptiveColors.textSecondary
         )
-        androidx.compose.material3.Text(
+
+        Text(
             text = pressure?.toString() ?: "—",
             fontSize = AppTheme.Typography.BodyLarge.first,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-            color = when {
-                tireData == null || pressure == null -> AdaptiveColors.textDisabled
-                pressure < 200 -> AdaptiveColors.error
-                pressure > 280 -> AdaptiveColors.warning
-                else -> AdaptiveColors.success
-            }
+            fontWeight = FontWeight.Bold,
+            color = pressureColor
         )
-        androidx.compose.material3.Text(
+
+        Text(
             text = temperature?.let { "${it}°C" } ?: "—",
             fontSize = AppTheme.Typography.LabelSmall.first,
             color = AdaptiveColors.textSecondary
@@ -408,9 +386,6 @@ private fun TireBadge(tireData: TireData?, label: String) {
     }
 }
 
-/**
- * Форматирует время поездки в HH:MM
- */
 private fun formatTripTime(seconds: Int): String {
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60

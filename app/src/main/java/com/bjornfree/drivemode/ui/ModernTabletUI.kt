@@ -51,7 +51,6 @@ import com.bjornfree.drivemode.domain.model.TireData
 import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
 import com.bjornfree.drivemode.ui.tabs.AutoHeatingTabOptimized
 import com.bjornfree.drivemode.ui.tabs.DiagnosticsTabOptimized
-import com.bjornfree.drivemode.ui.tabs.ConsoleTabOptimized
 import com.bjornfree.drivemode.domain.model.TirePressureData
 import com.bjornfree.drivemode.presentation.viewmodel.*
 import org.koin.androidx.compose.koinViewModel
@@ -75,7 +74,6 @@ fun ModernTabletUI() {
     val vehicleInfoViewModel: VehicleInfoViewModel = koinViewModel()
     val autoHeatingViewModel: AutoHeatingViewModel = koinViewModel()
     val diagnosticsViewModel: DiagnosticsViewModel = koinViewModel()
-    val consoleViewModel: ConsoleViewModel = koinViewModel()
     val settingsViewModel: SettingsViewModel = koinViewModel()
 
     var selectedTab by remember { mutableStateOf(0) }
@@ -145,7 +143,6 @@ fun ModernTabletUI() {
                     0 -> VehicleInfoTabOptimized(viewModel = vehicleInfoViewModel)
                     1 -> AutoHeatingTabOptimized(viewModel = autoHeatingViewModel)
                     2 -> DiagnosticsTabOptimized(viewModel = diagnosticsViewModel)
-                    3 -> ConsoleTabOptimized(viewModel = consoleViewModel)
                     4 -> SettingsTab(viewModel = settingsViewModel)
                 }
             }
@@ -219,12 +216,13 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     var serviceRunning by remember { mutableStateOf(false) }
 
     // Проверяем разрешения периодически
+    // ОПТИМИЗАЦИЯ: Увеличен интервал проверки для снижения нагрузки
     LaunchedEffect(Unit) {
         while (true) {
             overlayGranted = viewModel.hasSystemAlertWindowPermission()
             batteryOptimized = !viewModel.isBatteryOptimizationIgnored()
             serviceRunning = DriveModeService.isRunning
-            delay(2000)
+            delay(500) // Проверка каждые 5 секунд (вместо 2000ms)
         }
     }
 

@@ -1,34 +1,23 @@
 package com.bjornfree.drivemode.ui.theme
 
-import androidx.core.content.ContextCompat
-
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.provider.Settings
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.provider.Settings
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.bjornfree.drivemode.R
 
-/**
- * Контроллер плавающей панели с текущим режимом.
- *
- * Состояния:
- * - COMPACT  — маленькая иконка режима в углу (отображается постоянно).
- * - EXPANDED — расширенная панель с названием и описанием режима (3 сек после переключения).
- *
- * Панель добавляется как системный оверлей через WindowManager.
- */
 class ModePanelOverlayController(
     private val appContext: Context
 ) {
@@ -40,22 +29,21 @@ class ModePanelOverlayController(
         private const val PREF_X = "x"
         private const val PREF_Y = "y"
         private const val PREF_ENABLED = "enabled"
+
+        private const val PANEL_BG_COLOR = 0xE6000000.toInt()
+        private const val PANEL_STROKE_COLOR_DEFAULT = 0xFFFFFFFF.toInt()
     }
 
     private val wm: WindowManager =
         appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private val density: Float = appContext.resources.displayMetrics.density
-    // Размеры экрана нужны, чтобы правильно "прилипать" к левому/правому краю
     private val screenWidth: Int = appContext.resources.displayMetrics.widthPixels
 
-    // Включён ли сейчас оверлей (читаем из настроек, по умолчанию включён)
     private var overlayEnabled: Boolean = prefs.getBoolean(PREF_ENABLED, true)
 
-    // Текущие LayoutParams оверлея
     private var layoutParams: WindowManager.LayoutParams? = null
 
-    // Параметры перетаскивания
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
@@ -73,8 +61,6 @@ class ModePanelOverlayController(
 
     private var autoCollapseRunnable: Runnable? = null
 
-    // ОПТИМИЗАЦИЯ: Прямые integer значения вместо Color.parseColor()
-    // Избегаем парсинг строк при инициализации контроллера
     private val modeColors: Map<String, Int> = mapOf(
         "eco" to 0xFF4CAF50.toInt(),
         "comfort" to 0xFF2196F3.toInt(),
@@ -89,8 +75,6 @@ class ModePanelOverlayController(
         "adaptive" to "Режим подстраивается под стиль"
     )
 
-    // Отдельные иконки для режимов (нужно добавить соответствующие ресурсы в res/drawable)
-    // ic_mode_eco.xml, ic_mode_comfort.xml, ic_mode_sport.xml, ic_mode_adaptive.xml
     private val modeIconRes: Map<String, Int> = mapOf(
         "eco" to R.drawable.eco,
         "comfort" to R.drawable.comfort,
@@ -103,17 +87,8 @@ class ModePanelOverlayController(
         EXPANDED
     }
 
-    /**
-     * Включён ли сейчас оверлей (для привязки к галочке в UI).
-     */
     fun isOverlayEnabled(): Boolean = overlayEnabled
 
-    /**
-     * Включить или выключить оверлей.
-     *
-     * Если выключаем — убираем панель с экрана.
-     * Если включаем — показываем компактное состояние (иконка режима).
-     */
     fun setOverlayEnabled(enabled: Boolean) {
         overlayEnabled = enabled
         prefs.edit()
@@ -121,27 +96,20 @@ class ModePanelOverlayController(
             .apply()
 
         if (!enabled) {
-            // Прячем и удаляем оверлей
             destroy()
         } else {
-            // При включении — просто убеждаемся, что оверлей создан
-            // и показываем компактное состояние.
             showCompact()
         }
     }
 
-    /**
-     * Показать информацию о режиме:
-     * - обновляет цвет/иконки/текст,
-     * - разворачивает панель в состояние EXPANDED,
-     * - через ~3 сек сворачивает обратно в COMPACT.
-     */
     fun showMode(mode: String) {
         if (!overlayEnabled) return
         ensureAttached()
 
+        container?.visibility = View.VISIBLE
+
         val modeLower = mode.lowercase()
-        val baseColor = modeColors[modeLower] ?: Color.WHITE
+        val baseColor = modeColors[modeLower] ?: PANEL_STROKE_COLOR_DEFAULT
 
         val letter = when (modeLower) {
             "eco" -> "E"
@@ -159,56 +127,45 @@ class ModePanelOverlayController(
         }
         val subtitle = modeSubtitles[modeLower] ?: ""
 
-        // Обновляем UI
         tvLetter?.text = letter
         tvTitle?.text = title
         tvSubtitle?.text = subtitle
 
-        // Пытаемся использовать отдельную иконку для режима, если она есть.
         val iconResId = modeIconRes[modeLower]
         if (iconResId != null) {
-            // Используем готовый ресурс-иконку и скрываем букву
             iconContainer?.background = ContextCompat.getDrawable(appContext, iconResId)
             tvLetter?.visibility = View.GONE
         } else {
-            // Fallback: рисуем цветной круг с буквой
             tvLetter?.visibility = View.VISIBLE
             val iconBg = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(baseColor)
-                setStroke((2f * density).toInt(), Color.WHITE)
+                setStroke((2f * density).toInt(), PANEL_STROKE_COLOR_DEFAULT)
             }
             iconContainer?.background = iconBg
         }
 
-        // Обводка основной панели
         panelRoot?.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 24f * density
-            setColor(Color.parseColor("#E6000000")) // тёмный фон панели
+            setColor(PANEL_BG_COLOR)
             setStroke((2f * density).toInt(), baseColor)
         }
 
-        // Разворачиваем панель
         expandPanel()
 
-        // Переустанавливаем таймер сворачивания
         val root = panelRoot ?: return
         autoCollapseRunnable?.let { root.removeCallbacks(it) }
         autoCollapseRunnable = Runnable {
             collapsePanel()
         }
-        root.postDelayed(autoCollapseRunnable!!, 3000L)
+        root.postDelayed(autoCollapseRunnable!!, 200L)
     }
 
-    /**
-     * Явно свернуть панель в компактное состояние (оставить только кружок).
-     */
     fun collapsePanel() {
         if (currentState == PanelState.COMPACT) return
 
         currentState = PanelState.COMPACT
-
         val ext = extendedContainer ?: return
 
         ext.animate()
@@ -220,20 +177,27 @@ class ModePanelOverlayController(
             .start()
     }
 
-    /**
-     * Принудительно показать только компактное состояние (например, при старте сервиса).
-     */
+    fun hide() {
+        val root = panelRoot
+        autoCollapseRunnable?.let { root?.removeCallbacks(it) }
+        autoCollapseRunnable = null
+        container?.visibility = View.GONE
+    }
+
     fun showCompact(initialMode: String = "comfort") {
-        // выставляем режим и сразу сворачиваемся до компактного
         showMode(initialMode)
         collapsePanel()
     }
 
-    /**
-     * Полностью убрать панель и освободить ресурсы.
-     */
     fun destroy() {
+        val root = panelRoot
+        autoCollapseRunnable?.let { runnable ->
+            root?.removeCallbacks(runnable)
+        }
+        autoCollapseRunnable = null
+
         val c = container
+
         layoutParams = null
         container = null
         panelRoot = null
@@ -247,12 +211,9 @@ class ModePanelOverlayController(
             try {
                 wm.removeView(c)
             } catch (_: Throwable) {
-                // игнорируем
             }
         }
     }
-
-    // ---------------- Внутренняя реализация ----------------
 
     private fun expandPanel() {
         if (currentState == PanelState.EXPANDED) return
@@ -260,8 +221,6 @@ class ModePanelOverlayController(
 
         val ext = extendedContainer ?: return
 
-        // Делаем расширенную часть видимой, но прозрачной,
-        // чуть уменьшенной и слегка смещённой от иконки.
         ext.visibility = View.VISIBLE
         ext.alpha = 0f
         ext.translationX = 6f * density
@@ -269,7 +228,6 @@ class ModePanelOverlayController(
         ext.scaleX = 0.9f
         ext.scaleY = 0.9f
 
-        // Плавное появление текста: лёгкий zoom‑in + выезд к своему месту
         ext.animate()
             .alpha(1f)
             .translationX(0f)
@@ -284,10 +242,7 @@ class ModePanelOverlayController(
         if (container != null && panelRoot != null && container?.windowToken != null) {
             return
         }
-        // Если оверлей выключен — не создаём его.
-        if (!overlayEnabled) {
-            return
-        }
+        if (!overlayEnabled) return
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -305,13 +260,11 @@ class ModePanelOverlayController(
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            // значения по умолчанию
             val defaultGravity = Gravity.BOTTOM or Gravity.END
             val margin = (12f * density).toInt()
             val defaultX = margin
             val defaultY = margin
 
-            // восстанавливаем сохранённые значения, если есть
             gravity = prefs.getInt(PREF_GRAVITY, defaultGravity)
             x = prefs.getInt(PREF_X, defaultX)
             y = prefs.getInt(PREF_Y, defaultY)
@@ -327,7 +280,6 @@ class ModePanelOverlayController(
             )
         }
 
-        // Создаём корневую "пилюлю" программно
         val panel = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = FrameLayout.LayoutParams(
@@ -343,11 +295,10 @@ class ModePanelOverlayController(
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 24f * density
-                setColor(Color.parseColor("#E6000000"))
+                setColor(PANEL_BG_COLOR)
             }
         }
 
-        // Левая иконка-круг
         val iconSize = (56f * density).toInt()
         val iconFrame = FrameLayout(appContext).apply {
             layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
@@ -366,7 +317,6 @@ class ModePanelOverlayController(
         }
         iconFrame.addView(letterView)
 
-        // Правая расширенная часть
         val extended = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -386,14 +336,12 @@ class ModePanelOverlayController(
 
         val subtitleView = TextView(appContext).apply {
             text = "Сбалансированный режим"
-            setTextColor(Color.parseColor("#CCFFFFFF"))
+            setTextColor(0xCCFFFFFF.toInt())
             textSize = 14f
         }
 
         extended.addView(titleView)
         extended.addView(subtitleView)
-
-        // В компактном состоянии расширенная часть скрыта
         extended.visibility = View.GONE
 
         panel.addView(iconFrame)
@@ -401,7 +349,6 @@ class ModePanelOverlayController(
 
         rootContainer.addView(panel)
 
-        // Добавляем оверлей в WindowManager
         wm.addView(rootContainer, layoutParams ?: lp)
 
         container = rootContainer
@@ -412,14 +359,12 @@ class ModePanelOverlayController(
         tvSubtitle = subtitleView
         extendedContainer = extended
 
-        // Обработчик перетаскивания панели пальцем
         panel.setOnTouchListener { _, event ->
             val lpCurrent = layoutParams ?: return@setOnTouchListener false
             val rootView = container ?: return@setOnTouchListener false
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Запоминаем стартовую позицию окна и точку касания
                     initialX = lpCurrent.x
                     initialY = lpCurrent.y
                     initialTouchX = event.rawX
@@ -433,15 +378,12 @@ class ModePanelOverlayController(
                     val isStart = (lpCurrent.gravity and Gravity.START) == Gravity.START
                     val isEnd = (lpCurrent.gravity and Gravity.END) == Gravity.END
 
-                    // Для START: x — отступ от левого края, двигаем в ту же сторону, что и палец.
-                    // Для END:   x — отступ от правого края, двигаем в противоположную сторону.
                     lpCurrent.x = when {
                         isStart -> initialX + dx
                         isEnd -> initialX - dx
                         else -> initialX - dx
                     }
 
-                    // Для BOTTOM: y — отступ от нижнего края — здесь логика остаётся прежней.
                     lpCurrent.y = initialY - dy
 
                     layoutParams = lpCurrent
@@ -449,44 +391,38 @@ class ModePanelOverlayController(
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val lpCurrent = layoutParams ?: return@setOnTouchListener false
-                    val rootView = container ?: return@setOnTouchListener false
+                    val lpNow = layoutParams ?: return@setOnTouchListener false
+                    val rootViewNow = container ?: return@setOnTouchListener false
 
-                    // Фактическая левая граница панели на экране
-                    val rootWidth = rootView.width
+                    val rootWidth = rootViewNow.width
                     if (rootWidth > 0 && screenWidth > 0) {
-                        val isEndGravity = (lpCurrent.gravity and Gravity.END) == Gravity.END
+                        val isEndGravity = (lpNow.gravity and Gravity.END) == Gravity.END
                         val absoluteLeft = if (isEndGravity) {
-                            // При gravity END значение x — отступ от правого края
-                            screenWidth - lpCurrent.x - rootWidth
+                            screenWidth - lpNow.x - rootWidth
                         } else {
-                            // При gravity START значение x — отступ от левого края
-                            lpCurrent.x
+                            lpNow.x
                         }
 
-                        // Центр панели относительно экрана
                         val panelCenterX = absoluteLeft + rootWidth / 2f
                         val stickToLeft = panelCenterX < screenWidth / 2f
 
                         if (stickToLeft) {
-                            // Прилипаем к левому краю: gravity START, x = отступ от левого края
-                            lpCurrent.gravity = Gravity.BOTTOM or Gravity.START
-                            lpCurrent.x = absoluteLeft.coerceAtLeast(0)
+                            lpNow.gravity = Gravity.BOTTOM or Gravity.START
+                            lpNow.x = absoluteLeft.coerceAtLeast(0)
                         } else {
-                            // Прилипаем к правому краю: gravity END, x = отступ от правого края
-                            lpCurrent.gravity = Gravity.BOTTOM or Gravity.END
-                            val fromRight = (screenWidth - absoluteLeft - rootWidth).coerceAtLeast(0)
-                            lpCurrent.x = fromRight
+                            lpNow.gravity = Gravity.BOTTOM or Gravity.END
+                            val fromRight =
+                                (screenWidth - absoluteLeft - rootWidth).coerceAtLeast(0)
+                            lpNow.x = fromRight
                         }
 
-                        layoutParams = lpCurrent
-                        wm.updateViewLayout(rootView, lpCurrent)
+                        layoutParams = lpNow
+                        wm.updateViewLayout(rootViewNow, lpNow)
 
-                        // Сохраняем положение панели для следующего запуска
                         prefs.edit()
-                            .putInt(PREF_GRAVITY, lpCurrent.gravity)
-                            .putInt(PREF_X, lpCurrent.x)
-                            .putInt(PREF_Y, lpCurrent.y)
+                            .putInt(PREF_GRAVITY, lpNow.gravity)
+                            .putInt(PREF_X, lpNow.x)
+                            .putInt(PREF_Y, lpNow.y)
                             .apply()
                     }
 
@@ -498,17 +434,6 @@ class ModePanelOverlayController(
     }
 }
 
-/**
- * Состояние нижней полосы статуса вождения.
- *
- * Используется для отображения ключевых метрик:
- * - режим вождения
- * - текущая передача (R/D/P/N)
- * - скорость
- * - запас хода
- * - температура в салоне и снаружи
- * - давление во всех колёсах
- */
 data class DrivingStatusOverlayState(
     val modeTitle: String? = null,
     val gear: String? = null,
@@ -522,24 +447,50 @@ data class DrivingStatusOverlayState(
     val tirePressureRearRight: Int? = null
 )
 
-/**
- * Контроллер нижней фиксированной полосы статуса.
- *
- * Полоса:
- * - занимает всю ширину экрана
- * - находится в самом низу
- * - имеет фиксированную высоту около 48dp
- * - отображается поверх остальных окон как системный оверлей
- * - поддерживает темную и светлую тему
- */
 class DrivingStatusOverlayController(
     private val appContext: Context
 ) {
 
     companion object {
-        // Единственный активный экземпляр контроллера полоски.
-        // При создании нового экземпляра старый уничтожается, чтобы не было "залипших" оверлеев.
         private var currentInstance: DrivingStatusOverlayController? = null
+
+        private const val COLOR_BG_DARK = 0xF01E1E1E.toInt()
+        private const val COLOR_BG_LIGHT = 0xF0F5F5F5.toInt()
+        private const val COLOR_TEXT_DARK_PRIMARY = 0xFFFFFFFF.toInt()
+        private const val COLOR_TEXT_DARK_SECONDARY = 0xCCFFFFFF.toInt()
+        private const val COLOR_TEXT_LIGHT_PRIMARY = 0xFF1E1E1E.toInt()
+        private const val COLOR_TEXT_LIGHT_SECONDARY = 0xFF666666.toInt()
+
+        private const val COLOR_MODE_SPORT = 0xFFFF1744.toInt()
+        private const val COLOR_MODE_ECO = 0xFF4CAF50.toInt()
+        private const val COLOR_MODE_COMFORT = 0xFF2196F3.toInt()
+        private const val COLOR_MODE_ADAPTIVE = 0xFF9C27B0.toInt()
+
+        // Temp colors (dark theme)
+        private const val TEMP_DARK_VERY_COLD = 0xFF00E5FF.toInt()
+        private const val TEMP_DARK_COLD = 0xFF40C4FF.toInt()
+        private const val TEMP_DARK_COOL = 0xFF00E676.toInt()
+        private const val TEMP_DARK_COMFORT = 0xFFFFAB00.toInt()
+        private const val TEMP_DARK_WARM = 0xFFFF6D00.toInt()
+        private const val TEMP_DARK_HOT = 0xFFFF1744.toInt()
+
+        // Temp colors (light theme)
+        private const val TEMP_LIGHT_VERY_COLD = 0xFF00838F.toInt()
+        private const val TEMP_LIGHT_COLD = 0xFF0277BD.toInt()
+        private const val TEMP_LIGHT_COOL = 0xFF00897B.toInt()
+        private const val TEMP_LIGHT_COMFORT = 0xFFEF6C00.toInt()
+        private const val TEMP_LIGHT_WARM = 0xFFD84315.toInt()
+        private const val TEMP_LIGHT_HOT = 0xFFC62828.toInt()
+
+        // Tire colors (dark theme)
+        private const val TIRE_DARK_LOW = 0xFFFF1744.toInt()
+        private const val TIRE_DARK_HIGH = 0xFFFFAB00.toInt()
+        private const val TIRE_DARK_NORMAL = 0xFF00E676.toInt()
+
+        // Tire colors (light theme)
+        private const val TIRE_LIGHT_LOW = 0xFFC62828.toInt()
+        private const val TIRE_LIGHT_HIGH = 0xFFEF6C00.toInt()
+        private const val TIRE_LIGHT_NORMAL = 0xFF00897B.toInt()
     }
 
     private val wm: WindowManager =
@@ -551,7 +502,6 @@ class DrivingStatusOverlayController(
     private var container: FrameLayout? = null
     private var rootRow: LinearLayout? = null
 
-    // Флаг, включена ли логически нижняя полоска (зависит от настроек/репозитория)
     private var enabled: Boolean = true
 
     private var tvMode: TextView? = null
@@ -561,67 +511,47 @@ class DrivingStatusOverlayController(
     private var tvTemps: TextView? = null
     private var tvTires: TextView? = null
 
-    // Флаг, что полоса подключена к WindowManager
     private var attached: Boolean = false
 
-    // Текущая позиция полоски ("bottom" или "top")
     private var position: String = "bottom"
 
-    // Кэшированные цвета для темной/светлой темы
     private var isDarkTheme: Boolean = true
-    private var bgColor: Int = Color.parseColor("#F01E1E1E")
-    private var textColor: Int = Color.WHITE
-    private var textSecondaryColor: Int = Color.parseColor("#CCFFFFFF")
+    private var bgColor: Int = COLOR_BG_DARK
+    private var textColor: Int = COLOR_TEXT_DARK_PRIMARY
+    private var textSecondaryColor: Int = COLOR_TEXT_DARK_SECONDARY
 
     init {
-        // Если до этого уже был создан другой контроллер полоски,
-        // уничтожаем его оверлей, чтобы не оставалось нескольких полос одновременно.
         currentInstance?.destroy()
         currentInstance = this
     }
 
-    /**
-     * Логическое включение/выключение нижней полосы.
-     * При выключении полоса уничтожается и больше не пересоздаётся,
-     * пока снова не будет включена.
-     */
     fun setEnabled(isEnabled: Boolean) {
         if (enabled == isEnabled) return
         enabled = isEnabled
         if (!enabled) {
-            // Убираем полосу, чтобы она не "залипала" при выключении
             destroy()
         }
     }
 
-    /**
-     * Показать/гарантировать наличие полосы внизу экрана.
-     * Вызывается перед обновлением статуса.
-     */
     fun ensureVisible() {
         if (!enabled) return
         ensureAttached()
     }
 
-    /**
-     * Обновить тему полосы (темная/светлая).
-     * Вызывается при изменении темы приложения.
-     */
     fun setDarkTheme(dark: Boolean) {
         if (isDarkTheme == dark) return
 
         isDarkTheme = dark
         if (dark) {
-            bgColor = Color.parseColor("#F01E1E1E")
-            textColor = Color.WHITE
-            textSecondaryColor = Color.parseColor("#CCFFFFFF")
+            bgColor = COLOR_BG_DARK
+            textColor = COLOR_TEXT_DARK_PRIMARY
+            textSecondaryColor = COLOR_TEXT_DARK_SECONDARY
         } else {
-            bgColor = Color.parseColor("#F0F5F5F5")
-            textColor = Color.parseColor("#1E1E1E")
-            textSecondaryColor = Color.parseColor("#666666")
+            bgColor = COLOR_BG_LIGHT
+            textColor = COLOR_TEXT_LIGHT_PRIMARY
+            textSecondaryColor = COLOR_TEXT_LIGHT_SECONDARY
         }
 
-        // Обновляем UI если полоса уже отображается
         rootRow?.background = createBackgroundDrawable()
         tvMode?.setTextColor(textColor)
         tvGear?.setTextColor(textColor)
@@ -631,38 +561,22 @@ class DrivingStatusOverlayController(
         tvTires?.setTextColor(textSecondaryColor)
     }
 
-    /**
-     * Изменить позицию полоски ("bottom" или "top").
-     * Требует пересоздания overlay.
-     */
     fun setPosition(newPosition: String) {
-        if (position == newPosition) return
+        if (position == newPosition && !attached) return
+
+        val wasAttached = attached
+        destroy()
 
         position = newPosition
 
-        // Если полоска уже отображается, пересоздаем ее
-        if (attached) {
-            val wasAttached = attached
-            destroy()
-            if (wasAttached) {
-                ensureAttached()
-            }
+        if (wasAttached) {
+            ensureAttached()
         }
     }
 
-    /**
-     * Обновить отображаемые значения в нижней полосе.
-     *
-     * Можно вызывать из сервиса по мере обновления метрик автомобиля.
-     */
     fun updateStatus(state: DrivingStatusOverlayState) {
-        // Если логически отключено — не обновляем и не пересоздаём полосу.
-        if (!enabled) {
-            return
-        }
+        if (!enabled) return
 
-        // Если нет разрешения на оверлеи, не обновляем статус,
-        // чтобы избежать WindowManager$BadTokenException на обычных девайсах/эмуляторах.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !Settings.canDrawOverlays(appContext)
         ) {
@@ -672,22 +586,21 @@ class DrivingStatusOverlayController(
         try {
             ensureAttached()
         } catch (_: Throwable) {
-            // Если система не позволяет добавить окно (нет прав и т.п.) — просто выходим без падения.
             return
         }
 
-        tvMode?.text = state.modeTitle?.takeIf { it.isNotBlank() } ?: "—"
+        val modeText = state.modeTitle?.takeIf { it.isNotBlank() } ?: "—"
+        tvMode?.text = modeText
+        tvMode?.setTextColor(getModeColor(state.modeTitle))
+
         tvGear?.text = state.gear?.takeIf { it.isNotBlank() } ?: "—"
         tvSpeed?.text = state.speedKmh?.let { "$it км/ч" } ?: "— км/ч"
         tvRange?.text = state.rangeKm?.let { "$it км" } ?: "— км"
 
-        tvTemps?.text = buildTempsText(state)
-        tvTires?.text = buildTiresText(state)
+        updateTempsTextWithColor(state)
+        updateTiresTextWithColor(state)
     }
 
-    /**
-     * Полностью убрать полосу и освободить ресурсы.
-     */
     fun destroy() {
         val c = container
 
@@ -706,31 +619,21 @@ class DrivingStatusOverlayController(
             try {
                 wm.removeView(c)
             } catch (_: Throwable) {
-                // игнорируем
             }
         }
 
-        // Если уничтожаем текущий singleton‑экземпляр — очищаем ссылку,
-        // чтобы следующий созданный контроллер корректно стал новым currentInstance.
         if (currentInstance === this) {
             currentInstance = null
         }
     }
-
-    // ---------------- Внутренняя реализация ----------------
 
     private fun ensureAttached() {
         if (attached && container != null && container?.windowToken != null) {
             return
         }
 
-        // Если логически отключено — не создаём полосу.
-        if (!enabled) {
-            return
-        }
+        if (!enabled) return
 
-        // Если нет разрешения на оверлеи — не пытаемся добавлять окно,
-        // чтобы избежать WindowManager$BadTokenException на обычных девайсах/эмуляторах.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !Settings.canDrawOverlays(appContext)
         ) {
@@ -744,7 +647,7 @@ class DrivingStatusOverlayController(
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val heightPx = (48f * density).toInt()
+        val heightPx = (56f * density).toInt()
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -781,40 +684,38 @@ class DrivingStatusOverlayController(
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
 
-            val horizontalPadding = (12f * density).toInt()
-            val verticalPadding = (8f * density).toInt()
+            val horizontalPadding = (16f * density).toInt()
+            val verticalPadding = (10f * density).toInt()
             setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
 
             background = createBackgroundDrawable()
         }
 
-        // Общее правило: компактные блоки, разделённые лёгкими отступами
-        tvMode = TextView(appContext).apply {
+        tvRange = TextView(appContext).apply {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0.8f
+                1.0f
             )
             maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            text = "—"
+            text = "— км"
             setTextColor(textColor)
-            textSize = 14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            textSize = 16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
         }
 
         tvGear = TextView(appContext).apply {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0.4f
+                0.5f
             )
             maxLines = 1
             text = "—"
             setTextColor(textColor)
-            textSize = 16f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            textSize = 22f
+            typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             gravity = Gravity.CENTER
         }
 
@@ -822,25 +723,28 @@ class DrivingStatusOverlayController(
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0.9f
+                1.1f
             )
             maxLines = 1
             text = "— км/ч"
             setTextColor(textColor)
-            textSize = 14f
+            textSize = 18f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
         }
 
-        tvRange = TextView(appContext).apply {
+        tvMode = TextView(appContext).apply {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0.9f
             )
             maxLines = 1
-            text = "— км"
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            text = "—"
             setTextColor(textColor)
-            textSize = 14f
+            textSize = 16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
 
@@ -853,7 +757,8 @@ class DrivingStatusOverlayController(
             maxLines = 1
             text = "—° / —°"
             setTextColor(textSecondaryColor)
-            textSize = 13f
+            textSize = 16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
 
@@ -861,20 +766,21 @@ class DrivingStatusOverlayController(
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                1.4f
+                1.5f
             )
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             text = "—"
             setTextColor(textSecondaryColor)
-            textSize = 13f
+            textSize = 15f
+            typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
         }
 
-        row.addView(tvMode)
+        row.addView(tvRange)
         row.addView(tvGear)
         row.addView(tvSpeed)
-        row.addView(tvRange)
+        row.addView(tvMode)
         row.addView(tvTemps)
         row.addView(tvTires)
 
@@ -883,7 +789,6 @@ class DrivingStatusOverlayController(
         try {
             wm.addView(rootContainer, layoutParams ?: lp)
         } catch (_: Throwable) {
-            // Если система не позволяет добавить окно (нет прав и т.п.) — просто выходим без падения.
             return
         }
 
@@ -892,55 +797,182 @@ class DrivingStatusOverlayController(
         attached = true
     }
 
-    private fun buildTempsText(state: DrivingStatusOverlayState): String {
+    private fun getModeColor(mode: String?): Int {
+        return when (mode?.lowercase()) {
+            "sport" -> COLOR_MODE_SPORT
+            "eco" -> COLOR_MODE_ECO
+            "comfort" -> COLOR_MODE_COMFORT
+            "adaptive" -> COLOR_MODE_ADAPTIVE
+            else -> textColor
+        }
+    }
+
+    private fun getTempColor(tempC: Float?): Int {
+        if (tempC == null) return textSecondaryColor
+
+        return if (isDarkTheme) {
+            when {
+                tempC < 0 -> TEMP_DARK_VERY_COLD
+                tempC < 10 -> TEMP_DARK_COLD
+                tempC < 18 -> TEMP_DARK_COOL
+                tempC < 24 -> TEMP_DARK_COMFORT
+                tempC < 30 -> TEMP_DARK_WARM
+                else -> TEMP_DARK_HOT
+            }
+        } else {
+            when {
+                tempC < 0 -> TEMP_LIGHT_VERY_COLD
+                tempC < 10 -> TEMP_LIGHT_COLD
+                tempC < 18 -> TEMP_LIGHT_COOL
+                tempC < 24 -> TEMP_LIGHT_COMFORT
+                tempC < 30 -> TEMP_LIGHT_WARM
+                else -> TEMP_LIGHT_HOT
+            }
+        }
+    }
+
+    private fun getTirePressureColor(pressure: Int?): Int {
+        if (pressure == null) return textSecondaryColor
+
+        return if (isDarkTheme) {
+            when {
+                pressure < 200 -> TIRE_DARK_LOW
+                pressure > 280 -> TIRE_DARK_HIGH
+                else -> TIRE_DARK_NORMAL
+            }
+        } else {
+            when {
+                pressure < 200 -> TIRE_LIGHT_LOW
+                pressure > 280 -> TIRE_LIGHT_HIGH
+                else -> TIRE_LIGHT_NORMAL
+            }
+        }
+    }
+
+    private fun updateTempsTextWithColor(state: DrivingStatusOverlayState) {
         val cabin = state.cabinTempC
         val ambient = state.ambientTempC
 
         val cabinText = cabin?.toInt()?.let { "$it°" } ?: "—°"
         val ambientText = ambient?.toInt()?.let { "$it°" } ?: "—°"
 
-        // Формат: "IN 21° / OUT 8°"
-        return "IN $cabinText / OUT $ambientText"
+        val cabinColor = getTempColor(cabin)
+        val ambientColor = getTempColor(ambient)
+
+        val fullText = "IN $cabinText / OUT $ambientText"
+        val spannable = android.text.SpannableString(fullText)
+
+        val cabinStart = fullText.indexOf(cabinText)
+        if (cabinStart >= 0) {
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(cabinColor),
+                cabinStart,
+                cabinStart + cabinText.length,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        val ambientStart = fullText.indexOf(ambientText, cabinStart + cabinText.length)
+        if (ambientStart >= 0) {
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(ambientColor),
+                ambientStart,
+                ambientStart + ambientText.length,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        tvTemps?.text = spannable
     }
 
-    private fun buildTiresText(state: DrivingStatusOverlayState): String {
+    private fun updateTiresTextWithColor(state: DrivingStatusOverlayState) {
         val fl = state.tirePressureFrontLeft
         val fr = state.tirePressureFrontRight
         val rl = state.tirePressureRearLeft
         val rr = state.tirePressureRearRight
 
         fun format(value: Int?): String =
-            value?.let { "${it / 10}.${it % 10}" } ?: "—"
+            value?.let {
+                val bar = it / 100.0
+                String.format(java.util.Locale.US, "%.1f", bar)
+            } ?: "-"
 
-        // Формат компактной строки: "FL 2.3 · FR 2.3 · RL 2.3 · RR 2.3"
-        return "FL ${format(fl)} · FR ${format(fr)} · RL ${format(rl)} · RR ${format(rr)}"
+        val flText = format(fl)
+        val frText = format(fr)
+        val rlText = format(rl)
+        val rrText = format(rr)
+
+        val fullText = "↖ $flText ↗ $frText │ ↙ $rlText ↘ $rrText"
+        val spannable = android.text.SpannableString(fullText)
+
+        val flColor = getTirePressureColor(fl)
+        val frColor = getTirePressureColor(fr)
+        val rlColor = getTirePressureColor(rl)
+        val rrColor = getTirePressureColor(rr)
+
+        var start = 0
+        var end = start + 2 + flText.length
+        spannable.setSpan(
+            android.text.style.ForegroundColorSpan(flColor),
+            start,
+            end,
+            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        start = fullText.indexOf("↗", end)
+        if (start >= 0) {
+            end = start + 2 + frText.length
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(frColor),
+                start,
+                end,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        start = fullText.indexOf("↙", end)
+        if (start >= 0) {
+            end = start + 2 + rlText.length
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(rlColor),
+                start,
+                end,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        start = fullText.indexOf("↘", end)
+        if (start >= 0) {
+            end = start + 2 + rrText.length
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(rrColor),
+                start,
+                end,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+
+        tvTires?.text = spannable
     }
 
-    /**
-     * Создает Drawable для фона полосы с учетом текущей темы и позиции.
-     * Если полоса снизу - скругляем верхние углы.
-     * Если полоса сверху - скругляем нижние углы.
-     */
     private fun createBackgroundDrawable(): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
 
             val radius = 16f * density
             cornerRadii = if (position == "top") {
-                // Для верхней позиции скругляем нижние углы
                 floatArrayOf(
-                    0f, 0f,       // левый верхний
-                    0f, 0f,       // правый верхний
-                    radius, radius, // правый нижний
-                    radius, radius  // левый нижний
+                    0f, 0f,
+                    0f, 0f,
+                    radius, radius,
+                    radius, radius
                 )
             } else {
-                // Для нижней позиции скругляем верхние углы
                 floatArrayOf(
-                    radius, radius, // левый верхний
-                    radius, radius, // правый верхний
-                    0f, 0f,       // правый нижний
-                    0f, 0f        // левый нижний
+                    radius, radius,
+                    radius, radius,
+                    0f, 0f,
+                    0f, 0f
                 )
             }
 

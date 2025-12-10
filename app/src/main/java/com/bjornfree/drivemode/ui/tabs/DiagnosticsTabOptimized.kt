@@ -3,35 +3,28 @@ package com.bjornfree.drivemode.ui.tabs
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import com.bjornfree.drivemode.presentation.viewmodel.DiagnosticsViewModel
-import com.bjornfree.drivemode.ui.components.*
+import com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus
+import com.bjornfree.drivemode.ui.components.PremiumCard
+import com.bjornfree.drivemode.ui.components.Section
+import com.bjornfree.drivemode.ui.components.StatusIndicator
 import com.bjornfree.drivemode.ui.theme.AdaptiveColors
 import com.bjornfree.drivemode.ui.theme.AppTheme
 
-/**
- * Оптимизированный DiagnosticsTab
- *
- * ОПТИМИЗАЦИИ:
- * - LazyColumn вместо Column + verticalScroll
- * - Виртуализация для больших списков диагностических данных
- * - Оптимизированный рендеринг с key()
- *
- * ПРОИЗВОДИТЕЛЬНОСТЬ:
- * - Отрисовывает только видимые элементы
- * - Автоматический recycling для длинных списков
- */
 @Composable
 fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
     val carManagerStatus by viewModel.carManagerStatus.collectAsState()
     val metricsUpdateCount by viewModel.metricsUpdateCount.collectAsState()
     val diagnosticMessages by viewModel.diagnosticMessages.collectAsState()
 
-    val isCarConnected = carManagerStatus == com.bjornfree.drivemode.presentation.viewmodel.ServiceStatus.Running
+    val isCarConnected = carManagerStatus == ServiceStatus.Running
 
     LazyColumn(
         modifier = Modifier
@@ -39,7 +32,6 @@ fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
             .padding(AppTheme.Spacing.Medium),
         verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
     ) {
-        // ============ СТАТУС ПОДКЛЮЧЕНИЯ ============
         item(key = "car_status") {
             PremiumCard {
                 Row(
@@ -50,12 +42,12 @@ fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
                         Text(
                             text = if (isCarConnected) "CAR API ПОДКЛЮЧЕН" else "CAR API ОТКЛЮЧЕН",
                             fontSize = AppTheme.Typography.HeadlineMedium.first,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            fontWeight = FontWeight.Bold,
                             color = if (isCarConnected) AdaptiveColors.success else AdaptiveColors.error
                         )
 
                         if (isCarConnected) {
-                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(AppTheme.Spacing.Small))
+                            Spacer(modifier = Modifier.height(AppTheme.Spacing.Small))
                             Text(
                                 text = "Обновлений: $metricsUpdateCount",
                                 fontSize = AppTheme.Typography.BodyLarge.first,
@@ -73,7 +65,6 @@ fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
             }
         }
 
-        // ============ ДИАГНОСТИЧЕСКИЕ СООБЩЕНИЯ ============
         item(key = "diagnostic_messages_header") {
             Section(title = "Диагностические сообщения (${diagnosticMessages.size})") {}
         }
@@ -89,7 +80,6 @@ fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
                 }
             }
         } else {
-            // Виртуализированный список сообщений
             items(
                 items = diagnosticMessages,
                 key = { it.hashCode() }
@@ -100,9 +90,6 @@ fun DiagnosticsTabOptimized(viewModel: DiagnosticsViewModel) {
     }
 }
 
-/**
- * Карточка диагностического сообщения
- */
 @Composable
 private fun DiagnosticMessageCard(message: String) {
     PremiumCard {
@@ -110,7 +97,7 @@ private fun DiagnosticMessageCard(message: String) {
             text = message,
             fontSize = AppTheme.Typography.BodySmall.first,
             color = AdaptiveColors.textPrimary,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            fontFamily = FontFamily.Monospace
         )
     }
 }

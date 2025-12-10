@@ -30,11 +30,14 @@ val appModule = module {
      * - Startup: -60% времени
      * - Memory: -66%
      * - CPU: -80% на reflection (кэширование методов)
+     *
+     * LAZY INITIALIZATION: initialize() вызывается асинхронно при первом использовании,
+     * не блокируя главный поток при старте приложения.
      */
     single {
-        CarPropertyManagerSingleton(androidContext()).apply {
-            initialize()
-        }
+        CarPropertyManagerSingleton(androidContext())
+        // ВАЖНО: initialize() НЕ вызываем здесь! Он будет вызван автоматически
+        // при первом чтении свойства, на background thread
     }
 
     /**
@@ -83,13 +86,6 @@ val appModule = module {
         )
     }
 
-    /**
-     * DriveModeRepository - консоль логов и режимы вождения.
-     * ОПТИМИЗАЦИЯ: ArrayDeque вместо MutableList (O(1) vs O(n)).
-     */
-    single {
-        DriveModeRepository()
-    }
 
     // ========================================
     // Layer 3: ViewModels
@@ -127,15 +123,6 @@ val appModule = module {
         )
     }
 
-    /**
-     * ConsoleViewModel - для ConsoleTab (Консоль логов).
-     * Реактивный доступ к логам системы.
-     */
-    viewModel {
-        ConsoleViewModel(
-            driveModeRepo = get()
-        )
-    }
 
     /**
      * SettingsViewModel - для SettingsTab (Настройки).

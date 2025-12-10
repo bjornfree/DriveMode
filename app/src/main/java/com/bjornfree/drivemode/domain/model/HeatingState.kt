@@ -1,5 +1,7 @@
 package com.bjornfree.drivemode.domain.model
 
+import org.koin.core.time.Timer
+
 /**
  * Состояние системы автоподогрева сидений.
  *
@@ -50,7 +52,9 @@ data class HeatingState(
     /**
      * Timestamp последнего изменения состояния.
      */
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+
+    val turnedOffByTimer: Boolean = false
 ) {
     /**
      * Проверяет что подогрев должен быть активен на основе температуры.

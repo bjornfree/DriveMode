@@ -1,173 +1,96 @@
 package com.bjornfree.drivemode.presentation.viewmodel
 
 import android.content.Context
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import com.bjornfree.drivemode.data.preferences.PreferencesManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * ViewModel для SettingsTab (Настройки).
- *
- * Управляет настройками приложения:
- * - Demo mode (тестирование без реального автомобиля)
- * - Border overlay (включен/выключен)
- * - Panel overlay (включен/выключен)
- * - Статистика запусков
- *
- * @param context Application context для проверки permissions
- * @param prefsManager для сохранения настроек
- */
 class SettingsViewModel(
-    private val context: Context,
+    context: Context,
     private val prefsManager: PreferencesManager
 ) : ViewModel() {
 
-    /**
-     * Demo mode (для тестирования без автомобиля).
-     */
+    private val appContext: Context = context.applicationContext
+
     private val _demoMode = MutableStateFlow(prefsManager.demoMode)
     val demoMode: StateFlow<Boolean> = _demoMode.asStateFlow()
 
-    /**
-     * Border overlay включен.
-     */
     private val _borderEnabled = MutableStateFlow(prefsManager.borderEnabled)
     val borderEnabled: StateFlow<Boolean> = _borderEnabled.asStateFlow()
 
-    /**
-     * Panel overlay включен.
-     */
     private val _panelEnabled = MutableStateFlow(prefsManager.panelEnabled)
     val panelEnabled: StateFlow<Boolean> = _panelEnabled.asStateFlow()
 
-    /**
-     * Нижняя полоска метрик включена.
-     */
     private val _metricsBarEnabled = MutableStateFlow(prefsManager.metricsBarEnabled)
     val metricsBarEnabled: StateFlow<Boolean> = _metricsBarEnabled.asStateFlow()
 
-    /**
-     * Положение полоски метрик ("bottom" или "top").
-     */
     private val _metricsBarPosition = MutableStateFlow(prefsManager.metricsBarPosition)
     val metricsBarPosition: StateFlow<String> = _metricsBarPosition.asStateFlow()
 
-    /**
-     * Количество запусков приложения.
-     */
     private val _launchCount = MutableStateFlow(prefsManager.launchCount)
     val launchCount: StateFlow<Int> = _launchCount.asStateFlow()
 
-    /**
-     * Режим темы приложения.
-     * "auto" = следует системной теме (по умолчанию)
-     * "light" = всегда светлая тема
-     * "dark" = всегда темная тема
-     */
     private val _themeMode = MutableStateFlow(prefsManager.themeMode)
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
-    /**
-     * Переключает demo mode.
-     */
     fun toggleDemoMode() {
         val newValue = !_demoMode.value
         prefsManager.demoMode = newValue
         _demoMode.value = newValue
     }
 
-    /**
-     * Устанавливает demo mode.
-     *
-     * @param enabled true для включения demo mode
-     */
     fun setDemoMode(enabled: Boolean) {
         prefsManager.demoMode = enabled
         _demoMode.value = enabled
     }
 
-    /**
-     * Переключает border overlay.
-     */
     fun toggleBorderOverlay() {
         val newValue = !_borderEnabled.value
         prefsManager.borderEnabled = newValue
         _borderEnabled.value = newValue
     }
 
-    /**
-     * Устанавливает border overlay.
-     *
-     * @param enabled true для включения border
-     */
     fun setBorderEnabled(enabled: Boolean) {
         prefsManager.borderEnabled = enabled
         _borderEnabled.value = enabled
     }
 
-    /**
-     * Переключает panel overlay.
-     */
     fun togglePanelOverlay() {
         val newValue = !_panelEnabled.value
         prefsManager.panelEnabled = newValue
         _panelEnabled.value = newValue
     }
 
-    /**
-     * Устанавливает panel overlay.
-     *
-     * @param enabled true для включения panel
-     */
     fun setPanelEnabled(enabled: Boolean) {
         prefsManager.panelEnabled = enabled
         _panelEnabled.value = enabled
     }
 
-    /**
-     * Переключает нижнюю полоску метрик.
-     */
     fun toggleMetricsBar() {
         val newValue = !_metricsBarEnabled.value
         prefsManager.metricsBarEnabled = newValue
         _metricsBarEnabled.value = newValue
     }
 
-    /**
-     * Устанавливает отображение нижней полоски метрик.
-     *
-     * @param enabled true для включения полоски
-     */
     fun setMetricsBarEnabled(enabled: Boolean) {
         prefsManager.metricsBarEnabled = enabled
         _metricsBarEnabled.value = enabled
     }
 
-    /**
-     * Устанавливает положение полоски метрик.
-     *
-     * @param position "bottom" или "top"
-     */
     fun setMetricsBarPosition(position: String) {
         prefsManager.metricsBarPosition = position
         _metricsBarPosition.value = position
     }
 
-    /**
-     * Устанавливает режим темы приложения.
-     *
-     * @param mode "auto", "light", или "dark"
-     */
     fun setThemeMode(mode: String) {
         prefsManager.themeMode = mode
         _themeMode.value = mode
     }
 
-    /**
-     * Сбрасывает все настройки к значениям по умолчанию.
-     */
     fun resetToDefaults() {
         setDemoMode(false)
         setBorderEnabled(true)
@@ -176,9 +99,6 @@ class SettingsViewModel(
         setThemeMode("auto")
     }
 
-    /**
-     * Очищает все данные (включая статистику).
-     */
     fun clearAllData() {
         prefsManager.clearAll()
         _demoMode.value = false
@@ -188,19 +108,12 @@ class SettingsViewModel(
         _launchCount.value = 0
     }
 
-    /**
-     * Проверяет наличие системных permissions.
-     * Используется для отображения статуса в UI.
-     */
     fun hasSystemAlertWindowPermission(): Boolean {
-        return android.provider.Settings.canDrawOverlays(context)
+        return Settings.canDrawOverlays(appContext)
     }
 
-    /**
-     * Проверяет игнорируются ли батарейные оптимизации.
-     */
     fun isBatteryOptimizationIgnored(): Boolean {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-        return pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+        val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        return pm?.isIgnoringBatteryOptimizations(appContext.packageName) ?: false
     }
 }

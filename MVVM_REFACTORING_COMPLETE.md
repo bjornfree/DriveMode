@@ -67,7 +67,7 @@
   - Удалены все методы чтения метрик → VehicleMetricsRepository
   - Удалены диагностические тесты → DiagnosticsViewModel
   - Оставлено только HVAC seat control
-- ✅ DriveModeServiceRefactored: делегация в repositories
+- ✅ DriveModeService: делегация в repositories
   - Console logging → DriveModeRepository
   - Ignition monitoring → IgnitionStateRepository
   - Улучшена log deduplication

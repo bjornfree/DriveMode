@@ -4,12 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
 import com.bjornfree.drivemode.domain.model.VehicleMetrics
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.*
 
 data class MainMetrics(
     val speed: Float,
@@ -40,55 +35,19 @@ data class TemperatureMetrics(
     val coolantTemp: Float?
 )
 
-/**
- * ViewModel для VehicleInfoTab (Бортовой ПК).
- *
- * Предоставляет реактивные данные о метриках автомобиля для UI.
- * Заменяет polling loops в ModernTabletUI.
- *
- * До (в ModernTabletUI):
- * ```
- * LaunchedEffect(Unit) {
- *     while (true) {
- *         speed = VehicleMetricsService.getSpeed()
- *         rpm = VehicleMetricsService.getRPM()
- *         delay(200)  // ❌ Polling каждые 200ms
- *     }
- * }
- * ```
- *
- * После (с ViewModel):
- * ```
- * val viewModel: VehicleInfoViewModel = koinViewModel()
- * val metrics by viewModel.vehicleMetrics.collectAsState()
- *
- * Text("Speed: ${metrics.speed}")  // ✅ Реактивно обновляется
- * ```
- *
- * @param metricsRepo repository с метриками автомобиля
- */
 class VehicleInfoViewModel(
     private val metricsRepo: VehicleMetricsRepository
 ) : ViewModel() {
 
-    /**
-     * Реактивный поток метрик автомобиля.
-     * Автоматически обновляется когда Repository получает новые данные.
-     *
-     * UI подписывается через collectAsState() и получает обновления
-     * без polling loops.
-     */
     val vehicleMetrics: StateFlow<VehicleMetrics> = metricsRepo.vehicleMetrics
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = VehicleMetrics()
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            VehicleMetrics()
         )
 
-    // Базовый поток с полными метриками
-    private val baseMetrics: StateFlow<VehicleMetrics> = vehicleMetrics
+    private val baseMetrics = vehicleMetrics
 
-    // Основные метрики: скорость / обороты / передача
     val mainMetrics: StateFlow<MainMetrics> = baseMetrics
         .map { m ->
             MainMetrics(
@@ -99,12 +58,11 @@ class VehicleInfoViewModel(
         }
         .distinctUntilChanged()
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = MainMetrics(0f, 0, "P")
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            MainMetrics(0f, 0, "P")
         )
 
-    // Метрики топлива
     val fuelMetrics: StateFlow<FuelMetrics> = baseMetrics
         .map { m ->
             FuelMetrics(
@@ -115,12 +73,11 @@ class VehicleInfoViewModel(
         }
         .distinctUntilChanged()
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = FuelMetrics(null, null, null)
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            FuelMetrics(null, null, null)
         )
 
-    // Пробег и время поездки
     val tripMetrics: StateFlow<TripMetrics> = baseMetrics
         .map { m ->
             TripMetrics(
@@ -131,26 +88,22 @@ class VehicleInfoViewModel(
         }
         .distinctUntilChanged()
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = TripMetrics(null, null, null)
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            TripMetrics(null, null, null)
         )
 
-    // Давление в шинах
     val tireMetrics: StateFlow<TireMetrics> = baseMetrics
         .map { m ->
-            TireMetrics(
-                tirePressure = m.tirePressure
-            )
+            TireMetrics(m.tirePressure)
         }
         .distinctUntilChanged()
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = TireMetrics(null)
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            TireMetrics(null)
         )
 
-    // Температуры
     val temperatureMetrics: StateFlow<TemperatureMetrics> = baseMetrics
         .map { m ->
             TemperatureMetrics(
@@ -162,31 +115,16 @@ class VehicleInfoViewModel(
         }
         .distinctUntilChanged()
         .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = TemperatureMetrics(null, null, null, null)
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            TemperatureMetrics(null, null, null, null)
         )
 
     init {
-        // Запускаем мониторинг метрик при создании ViewModel
         startMonitoring()
     }
 
-    /**
-     * Запускает мониторинг метрик автомобиля.
-     */
     private fun startMonitoring() {
-        viewModelScope.launch {
-            metricsRepo.startMonitoring()
-        }
-    }
-
-    /**
-     * Вызывается когда ViewModel больше не нужна.
-     * Останавливает мониторинг для экономии ресурсов.
-     */
-    override fun onCleared() {
-        super.onCleared()
-        metricsRepo.stopMonitoring()
+        metricsRepo.startMonitoring()
     }
 }

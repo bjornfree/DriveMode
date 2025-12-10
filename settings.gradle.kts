@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "DriveMode"
 include(":app")
+include(":adaptapi")
