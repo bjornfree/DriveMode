@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.bjornfree.drivemode.R
 import com.bjornfree.drivemode.core.AutoSeatHeatService
 import com.bjornfree.drivemode.core.DriveModeService
+import com.bjornfree.drivemode.core.DriveModeServiceRefactored
 import com.bjornfree.drivemode.core.VehicleMetricsService
 import com.bjornfree.drivemode.domain.model.TireData
 import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
@@ -223,7 +224,7 @@ fun SettingsTab(viewModel: SettingsViewModel) {
         while (true) {
             overlayGranted = viewModel.hasSystemAlertWindowPermission()
             batteryOptimized = !viewModel.isBatteryOptimizationIgnored()
-            serviceRunning = DriveModeService.isRunning
+            serviceRunning = DriveModeServiceRefactored.isRunning
             delay(2000)
         }
     }

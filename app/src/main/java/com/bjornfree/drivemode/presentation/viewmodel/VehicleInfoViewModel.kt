@@ -166,27 +166,4 @@ class VehicleInfoViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = TemperatureMetrics(null, null, null, null)
         )
-
-    init {
-        // Запускаем мониторинг метрик при создании ViewModel
-        startMonitoring()
-    }
-
-    /**
-     * Запускает мониторинг метрик автомобиля.
-     */
-    private fun startMonitoring() {
-        viewModelScope.launch {
-            metricsRepo.startMonitoring()
-        }
-    }
-
-    /**
-     * Вызывается когда ViewModel больше не нужна.
-     * Останавливает мониторинг для экономии ресурсов.
-     */
-    override fun onCleared() {
-        super.onCleared()
-        metricsRepo.stopMonitoring()
-    }
 }

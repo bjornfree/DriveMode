@@ -341,7 +341,9 @@ private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.m
             ) {
                 // Передние колеса
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     TireBadge(tirePressure?.frontLeft, "FL")
@@ -350,7 +352,9 @@ private fun TirePressureOptimized(tirePressure: com.bjornfree.drivemode.domain.m
 
                 // Задние колеса
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     TireBadge(tirePressure?.rearLeft, "RL")
@@ -370,6 +374,7 @@ private fun TireBadge(tireData: TireData?, label: String) {
     val temperature = tireData?.temperature
     Column(
         modifier = Modifier
+            .width(70.dp)
             .background(
                 color = when {
                     tireData == null || pressure == null -> AdaptiveColors.textDisabled.copy(alpha = 0.3f)
@@ -391,7 +396,7 @@ private fun TireBadge(tireData: TireData?, label: String) {
         )
         androidx.compose.material3.Text(
             text = pressure?.toString() ?: "—",
-            fontSize = AppTheme.Typography.BodyLarge.first,
+            fontSize = AppTheme.Typography.HeadlineSmall.first,
             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             color = when {
                 tireData == null || pressure == null -> AdaptiveColors.textDisabled
@@ -402,7 +407,7 @@ private fun TireBadge(tireData: TireData?, label: String) {
         )
         androidx.compose.material3.Text(
             text = temperature?.let { "${it}°C" } ?: "—",
-            fontSize = AppTheme.Typography.LabelSmall.first,
+            fontSize = AppTheme.Typography.BodyLarge.first,
             color = AdaptiveColors.textSecondary
         )
     }

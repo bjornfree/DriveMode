@@ -49,6 +49,8 @@ class VehicleMetricsRepository(
 
     // Coroutine scope для мониторинга
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
     private var monitorJob: Job? = null
 
     @Volatile
@@ -65,11 +67,21 @@ class VehicleMetricsRepository(
     /**
      * Запускает мониторинг метрик автомобиля.
      * Обновляет state с разделением на быстрые и медленные метрики.
+     * Thread-safe и может быть вызван из разных потоков.
      */
+    @Synchronized
     fun startMonitoring() {
-        if (isMonitoring) {
+        // Проверяем не только флаг, но и что джоба не активна
+        val currentJob = monitorJob
+        if (isMonitoring && currentJob?.isActive == true) {
             Log.d(TAG, "Monitoring already running")
             return
+        }
+
+        // Если старая джоба все еще существует, отменяем её
+        if (currentJob?.isActive == true) {
+            Log.w(TAG, "Cancelling stale monitor job before starting new one")
+            currentJob.cancel()
         }
 
         Log.i(TAG, "Starting vehicle metrics monitoring...")
@@ -158,8 +170,15 @@ class VehicleMetricsRepository(
 
     /**
      * Останавливает мониторинг метрик.
+     * Thread-safe и может быть вызван из разных потоков.
      */
+    @Synchronized
     fun stopMonitoring() {
+        if (!isMonitoring && monitorJob == null) {
+            Log.d(TAG, "Monitoring already stopped")
+            return
+        }
+
         Log.i(TAG, "Stopping vehicle metrics monitoring...")
         isMonitoring = false
         monitorJob?.cancel()

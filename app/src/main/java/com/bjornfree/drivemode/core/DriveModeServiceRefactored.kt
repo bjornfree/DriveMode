@@ -498,8 +498,6 @@ class DriveModeServiceRefactored : Service() {
         themeMonitorJob?.cancel()
         overlaySettingsMonitorJob?.cancel()
 
-        // Останавливаем мониторинг метрик
-        vehicleMetricsRepo.stopMonitoring()
 
         isRunning = false
         instance = null
